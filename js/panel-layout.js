@@ -175,6 +175,8 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
             html.panel-ios-device .panel-mobile-toggle { display:none !important; }
             html.panel-ios-device main { width:100% !important; max-width:100vw !important; margin-left:0 !important; overflow-x:hidden !important; }
             html.panel-ios-device .panel-global-header { min-height:76px !important; padding:12px 14px !important; }
+            html.panel-ios-device #global-header-mobile-btn { position:absolute !important; left:14px !important; top:12px !important; }
+            html.panel-ios-device .panel-global-title { padding-left:54px !important; }
         `;
         document.head.appendChild(style);
     }
@@ -192,7 +194,8 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
         const sidebar = navigation?.closest('aside');
         if (!navigation || !sidebar) return;
         ensureBrandLogo(sidebar);
-        sidebar.querySelector(':scope > div:last-child')?.remove();
+        const sidebarFooter = sidebar.querySelector(':scope > div:last-child');
+        if (sidebar.children.length > 1 && sidebarFooter) sidebarFooter.remove();
 
         ensureCommunityLink(navigation, currentPage);
         normalizeNavigation(navigation, currentPage);
@@ -430,6 +433,7 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
         const userProfile = sidebar.lastElementChild;
         if (userProfile) {
             userProfile.dataset.panelUserProfile = 'true';
+            userProfile.classList.add('panel-sidebar-profile');
             sidebar.firstElementChild?.querySelector('nav')?.before(userProfile);
         }
         if (legacySidebar) {
