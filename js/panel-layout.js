@@ -167,6 +167,13 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
                 #panel-save-reminder { right:10px; bottom:82px; max-width:calc(100vw - 20px); }
             }
             @media (min-width:768px) and (max-width:1100px) { .panel-header-tools .panel-search-host { width:min(460px,42vw); } }
+            /* Pe iPhone/PWA folosim întotdeauna meniul mobil, chiar dacă Safari raportează un viewport CSS mai mare. */
+            html.panel-ios-device body.panel-shared-sidebar-page { padding-left:0 !important; }
+            html.panel-ios-device #panel-shared-sidebar { display:none !important; }
+            html.panel-ios-device .panel-responsive-sidebar { display:none !important; }
+            html.panel-ios-device .panel-mobile-toggle { display:flex !important; }
+            html.panel-ios-device main { width:100% !important; max-width:100vw !important; margin-left:0 !important; overflow-x:hidden !important; }
+            html.panel-ios-device .panel-global-header { min-height:76px !important; padding:12px 14px !important; }
         `;
         document.head.appendChild(style);
     }
