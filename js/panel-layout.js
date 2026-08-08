@@ -177,6 +177,9 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
             html.panel-ios-device .panel-global-header { min-height:76px !important; padding:12px 14px !important; }
             html.panel-ios-device #global-header-mobile-btn { position:absolute !important; left:14px !important; top:12px !important; }
             html.panel-ios-device .panel-global-title { padding-left:54px !important; }
+            html.panel-ios-device .panel-global-header { min-height:116px !important; padding:14px !important; display:grid !important; grid-template-columns:minmax(0,1fr) !important; gap:10px !important; align-items:center !important; }
+            html.panel-ios-device .panel-global-header .panel-global-title { width:100% !important; min-height:40px !important; }
+            html.panel-ios-device .panel-global-header > div:not(.panel-global-title) { width:100% !important; max-width:none !important; margin:0 !important; }
         `;
         document.head.appendChild(style);
     }
