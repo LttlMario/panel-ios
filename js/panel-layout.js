@@ -117,7 +117,7 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
             html[data-panel-theme="dark"] .bg-slate-800 { background-color:#111c2e !important; }
             html[data-panel-theme="dark"] .border-slate-800, html[data-panel-theme="dark"] .border-slate-700, html[data-panel-theme="dark"] .post, html[data-panel-theme="dark"] .dialog { border-color:#223047 !important; }
 
-            .panel-sidebar-toggle { position:absolute; top:18px; right:-14px; z-index:70; width:28px; height:28px; display:flex; align-items:center; justify-content:center; border:1px solid #334155; border-radius:999px; background:#0f172a; color:#cbd5e1; cursor:pointer; box-shadow:0 6px 18px rgba(0,0,0,.3); }
+            .panel-sidebar-toggle { display:none !important; }
             .panel-sidebar-toggle:hover { background:#1e293b; color:#fff; }
             #panel-mobile-backdrop { display:none; position:fixed; inset:0; z-index:4000; background:rgba(2,6,23,.78); backdrop-filter:blur(3px); }
             #panel-mobile-menu { position:fixed; inset:0 auto 0 0; z-index:4001; width:min(288px,86vw); background:#0f172a; border-right:1px solid #1e293b; transform:translateX(-102%); transition:transform .2s ease; box-shadow:16px 0 40px rgba(0,0,0,.45); overflow:auto; }
@@ -171,6 +171,7 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
             html.panel-ios-device body.panel-shared-sidebar-page { padding-left:0 !important; }
             html.panel-ios-device #panel-shared-sidebar { display:none !important; }
             html.panel-ios-device .panel-responsive-sidebar { display:none !important; }
+            html.panel-ios-device .panel-sidebar-toggle { display:none !important; }
             html.panel-ios-device .panel-mobile-toggle { display:flex !important; }
             html.panel-ios-device main { width:100% !important; max-width:100vw !important; margin-left:0 !important; overflow-x:hidden !important; }
             html.panel-ios-device .panel-global-header { min-height:76px !important; padding:12px 14px !important; }
