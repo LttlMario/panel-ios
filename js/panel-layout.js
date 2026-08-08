@@ -124,7 +124,7 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
             #panel-mobile-menu.is-open { transform:translateX(0); }
             #panel-mobile-menu .panel-mobile-top { height:64px; padding:0 18px; border-bottom:1px solid #1e293b; display:flex; align-items:center; justify-content:space-between; }
             #panel-mobile-menu .panel-mobile-nav { padding:16px; }
-            .panel-mobile-toggle { display:none; position:relative; z-index:40; width:40px; height:40px; flex:none; align-items:center; justify-content:center; border:1px solid #334155; border-radius:12px; background:#020617; color:#e2e8f0; font-size:18px; cursor:pointer; }
+            .panel-mobile-toggle { display:none !important; }
             .panel-action-bar { display:flex; align-items:center; justify-content:flex-end; gap:12px; flex-wrap:wrap; padding:12px max(16px, calc((100vw - 1280px) / 2)); border-bottom:1px solid #1e293b; background:rgba(15,23,42,.72); }
             .panel-action-bar > div { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
             .panel-bottom-save-bar { position:sticky; bottom:0; z-index:30; display:flex; justify-content:flex-end; padding:14px 16px; border-top:1px solid #1e293b; background:rgba(15,23,42,.96); backdrop-filter:blur(10px); }
@@ -172,7 +172,7 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
             html.panel-ios-device #panel-shared-sidebar { display:none !important; }
             html.panel-ios-device .panel-responsive-sidebar { display:none !important; }
             html.panel-ios-device .panel-sidebar-toggle { display:none !important; }
-            html.panel-ios-device .panel-mobile-toggle { display:flex !important; }
+            html.panel-ios-device .panel-mobile-toggle { display:none !important; }
             html.panel-ios-device main { width:100% !important; max-width:100vw !important; margin-left:0 !important; overflow-x:hidden !important; }
             html.panel-ios-device .panel-global-header { min-height:76px !important; padding:12px 14px !important; }
         `;
@@ -281,6 +281,19 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
         mobileMenu.id = 'panel-mobile-menu';
         mobileMenu.innerHTML = `<div class="panel-mobile-top"><img src="img/logo-192.png" alt="Logo Panel" class="panel-brand-logo"><button type="button" class="w-9 h-9 rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 text-lg" aria-label="Închide meniul">×</button></div><nav class="panel-mobile-nav space-y-1.5"></nav>`;
         document.body.append(backdrop, mobileMenu);
+        const sidebarProfile = document.querySelector('[data-panel-user-profile]');
+        if (sidebarProfile) {
+            const mobileProfile = sidebarProfile.cloneNode(true);
+            mobileProfile.dataset.mobileUserProfile = 'true';
+            mobileProfile.querySelectorAll('[id]').forEach((element) => {
+                if (element.id === 'user-avatar') element.dataset.userAvatar = 'true';
+                if (element.id === 'user-display-name') element.dataset.userName = 'true';
+                if (element.id === 'user-role') element.dataset.userRole = 'true';
+                element.removeAttribute('id');
+            });
+            mobileProfile.querySelector('[data-shared-logout]')?.addEventListener('click', () => typeof logout === 'function' ? logout() : location.replace('login.html'));
+            mobileMenu.querySelector('.panel-mobile-top').after(mobileProfile);
+        }
 
         const mobileNav = mobileMenu.querySelector('.panel-mobile-nav');
         mobileNav.innerHTML = navigation.innerHTML;
@@ -300,6 +313,10 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
             document.body.classList.add('panel-mobile-menu-open');
             document.body.style.overflow = 'hidden';
         };
+        window.toggleMobileMenu = openMobileMenu;
+        document.addEventListener('click', (event) => {
+            if (event.target.closest?.('#global-header-mobile-btn')) openMobileMenu();
+        });
         mobileMenu.querySelector('button').addEventListener('click', closeMobileMenu);
         backdrop.addEventListener('click', closeMobileMenu);
         mobileNav.querySelectorAll('a').forEach((link) => link.addEventListener('click', closeMobileMenu));
@@ -312,7 +329,7 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
             if (document.visibilityState === 'visible') closeMobileMenu();
         });
 
-        if (!document.querySelector('header, .panel-global-header')) {
+        if (false) {
             const headerObserver = new MutationObserver(() => {
                 const header = document.querySelector('.panel-global-header, header');
                 if (!header || document.querySelector('.panel-mobile-toggle')) return;
@@ -329,7 +346,7 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
             window.setTimeout(() => headerObserver.disconnect(), 5000);
         }
         const header = document.querySelector('header');
-        if (header) {
+        if (false && header) {
             const mobileToggle = document.createElement('button');
             mobileToggle.type = 'button';
             mobileToggle.className = 'panel-mobile-toggle';
@@ -374,7 +391,21 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
         if (roleElement && typeof getUser === 'function') roleElement.textContent = discordRoleLabel(getUser());
     }
 
+    function refreshSidebarUser() {
+        if (typeof getUser !== 'function') return;
+        const user = getUser() || {};
+        document.querySelectorAll('[data-panel-user-profile]').forEach((profile) => {
+            const avatar = profile.querySelector('#user-avatar, [data-user-avatar]');
+            const name = profile.querySelector('#user-display-name, [data-user-name]');
+            const role = profile.querySelector('#user-role, [data-user-role]');
+            if (avatar) avatar.src = user.avatar || user.avatar_url || '';
+            if (name) name.textContent = user.display_name || user.username || 'Utilizator';
+            if (role) role.textContent = discordRoleLabel(user);
+        });
+    }
+
     window.addEventListener('panel-user-updated', refreshSidebarUserRole);
+    window.addEventListener('panel-user-updated', refreshSidebarUser);
 
     function ensureBrandLogo(sidebar) {
         const heading=sidebar.querySelector('h1');
@@ -396,6 +427,11 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
             .find(nav => !nav.closest('#panel-mobile-menu'));
         const legacySidebar = legacyNavigation?.closest('aside') || null;
         const user=typeof getUser==='function'?getUser():null,organization=typeof getActiveOrganization==='function'?getActiveOrganization():null,sidebar=document.createElement('aside');sidebar.id='panel-shared-sidebar';sidebar.className='panel-responsive-sidebar bg-slate-900 border-r border-slate-800 flex flex-col justify-between';sidebar.style.width='18rem';sidebar.style.flex='0 0 18rem';sidebar.innerHTML=`<div class="p-6 overflow-y-auto"><h1 class="text-xl font-bold"><img src="${organization?.logo_url||'img/logo-192.png'}" alt="${organization?.name||'Logo Panel'}" class="panel-brand-logo" onerror="this.src='img/logo-192.png'"></h1>${organization?.banner_url?`<img src="${organization.banner_url}" alt="" class="mt-3 h-16 w-full rounded-lg object-cover" onerror="this.remove()">`:''}<nav id="sidebar-nav" class="mt-6 space-y-1.5"></nav></div><div class="p-4 border-t border-slate-800 flex items-center justify-between gap-2"><div class="flex items-center gap-3 min-w-0"><img id="user-avatar" class="w-9 h-9 rounded-full border border-slate-700 object-cover" src="${user?.avatar||user?.avatar_url||''}" alt=""><div class="min-w-0"><p id="user-display-name" class="font-semibold truncate">${user?.display_name||user?.username||'Utilizator'}</p><p id="user-role" class="text-xs text-emerald-400 truncate">${discordRoleLabel(user)}</p></div></div><button type="button" data-shared-logout class="text-xs text-rose-400">Logout</button></div>`;
+        const userProfile = sidebar.lastElementChild;
+        if (userProfile) {
+            userProfile.dataset.panelUserProfile = 'true';
+            sidebar.firstElementChild?.querySelector('nav')?.before(userProfile);
+        }
         if (legacySidebar) {
             legacySidebar.replaceWith(sidebar);
         } else if (document.getElementById('panel-sidebar-host')) {
