@@ -311,6 +311,22 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
             if (document.visibilityState === 'visible') closeMobileMenu();
         });
 
+        if (!document.querySelector('header, .panel-global-header')) {
+            const headerObserver = new MutationObserver(() => {
+                const header = document.querySelector('.panel-global-header, header');
+                if (!header || document.querySelector('.panel-mobile-toggle')) return;
+                const mobileToggle = document.createElement('button');
+                mobileToggle.type = 'button';
+                mobileToggle.className = 'panel-mobile-toggle';
+                mobileToggle.textContent = '☰';
+                mobileToggle.setAttribute('aria-label', 'Deschide meniul');
+                mobileToggle.addEventListener('click', openMobileMenu);
+                header.insertBefore(mobileToggle, header.firstChild);
+                headerObserver.disconnect();
+            });
+            headerObserver.observe(document.body, { childList: true, subtree: true });
+            window.setTimeout(() => headerObserver.disconnect(), 5000);
+        }
         const header = document.querySelector('header');
         if (header) {
             const mobileToggle = document.createElement('button');
