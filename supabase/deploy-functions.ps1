@@ -27,12 +27,7 @@ $functions = @(
     'close-expired-shifts',
     'manage-admin-center',
     'manage-organizations',
-    'manage-owned-organization',
-    'create-voucher-organization',
-    'discover-draft-roles',
-    'manage-draft-organization',
-    'save-draft-roles',
-    'touch-panel-session'
+    'manage-owned-organization'
 )
 
 foreach ($functionName in $functions) {
