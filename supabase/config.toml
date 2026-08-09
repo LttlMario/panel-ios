@@ -18,3 +18,21 @@ verify_jwt = false
 
 [functions.manage-organizations]
 verify_jwt = false
+
+[functions.manage-owned-organization]
+verify_jwt = false
+
+[functions.create-voucher-organization]
+verify_jwt = false
+
+[functions.discover-draft-roles]
+verify_jwt = false
+
+[functions.manage-draft-organization]
+verify_jwt = false
+
+[functions.save-draft-roles]
+verify_jwt = false
+
+[functions.touch-panel-session]
+verify_jwt = false
