@@ -602,6 +602,9 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
         if (typeof isPlatformAdmin === 'function' && isPlatformAdmin() && !navigation.querySelector('a[href="vouchere.html"]')) {
             const voucher = document.createElement('a'); voucher.href='vouchere.html'; voucher.dataset.role='99'; voucher.className='nav-link flex items-center space-x-3 px-4 py-3 rounded-xl transition text-sm text-slate-300 hover:bg-slate-800'; voucher.innerHTML='<span>🎟️</span><span>Vouchere</span>'; navigation.appendChild(voucher);
         }
+        if (typeof isPlatformAdmin === 'function' && isPlatformAdmin() && !navigation.querySelector('a[href="administrare-organizatie.html"]')) {
+            const ownerOrganization = document.createElement('a'); ownerOrganization.href='administrare-organizatie.html'; ownerOrganization.dataset.role='99'; ownerOrganization.className='nav-link flex items-center space-x-3 px-4 py-3 rounded-xl transition text-sm text-slate-300 hover:bg-slate-800'; ownerOrganization.innerHTML='<span>🏢</span><span>Administrare organizație</span>'; navigation.appendChild(ownerOrganization);
+        }
         if (typeof isPlatformAdmin === 'function' && isPlatformAdmin()) {
             navigation.querySelectorAll('a.nav-link').forEach((link) => { link.style.display = ''; });
         }
