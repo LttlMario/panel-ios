@@ -100,8 +100,7 @@
 
     <!-- Scriptul logic sincronizat cu index.html -->
     <script>
-        // Creează clientul după reînnoirea sesiunii, pentru a evita folosirea unui token expirat.
-        let supabaseClient = null;
+        const supabaseClient = window.createPanelSupabaseClient();
 
         const ROMANIA_TIME_ZONE = 'Europe/Bucharest';
 
@@ -146,36 +145,18 @@
             }
 
             try {
-                await window.ensurePanelSession();
-
-                // Reînnoirea poate actualiza utilizatorul și organizația activă.
-                const localData = JSON.parse(localStorage.getItem('discord_user') || cachedUser);
+                const localData = JSON.parse(cachedUser);
                 if (!localData || !localData.discord_id) {
                     window.location.href = 'login.html';
                     return;
                 }
 
-                const activeOrganizationId =
-                    window.getActiveOrganizationId?.() || localData.organization_id || null;
-
-                if (!activeOrganizationId) {
-                    window.location.href = 'guest.html';
-                    return;
-                }
-
-                // Client nou, cu sesiunea reînnoită mai sus.
-                supabaseClient = window.createPanelSupabaseClient();
-
                 // 3. Citire live din tabelul `users` din Supabase
-                let { data: dbUser, error: dbUserError } = await supabaseClient
+                let { data: dbUser } = await supabaseClient
                     .from('users')
                     .select('*')
                     .eq('discord_id', localData.discord_id)
                     .maybeSingle();
-
-                if (dbUserError) {
-                    console.warn('Profilul Supabase nu a putut fi încărcat; folosesc sesiunea locală:', dbUserError);
-                }
 
                 let activeUser = dbUser || localData;
 
@@ -183,8 +164,7 @@
                 currentUser.display_name = localData.display_name || activeUser.display_name || activeUser.username || 'Membru';
                 // Rolul sincronizat din Discord este sursa de adevăr, nu valoarea veche din tabelul users.
                 currentUser.role = localData.role || localData.default_role || activeUser.role || activeUser.default_role || 'Membru';
-                // Organizația selectată în sesiune are prioritate față de datele vechi din users.
-                currentUser.organization_id = activeOrganizationId;
+                currentUser.organization_id = activeUser.organization_id || localData.organization_id || null;
 
                 // Păstrăm sesiunea actualizată
                 localStorage.setItem('discord_user', JSON.stringify({
@@ -543,10 +523,7 @@
                 activeShiftRecord = data;
                 syncActiveShiftUI(); startTimer();
                 await sendGeneralDiscordWebhook('▶️ Pontaj Start', `Angajatul **${currentUser.display_name}** a pornit tura de **${selectedShiftType.toUpperCase()}**.`, 3066993);
-            } catch (error) {
-                console.error('Eroare pornire pontaj:', error);
-                alert(`Pontajul nu a putut fi pornit: ${error?.message || 'eroare necunoscută'}`);
-            }
+            } catch (error) { console.error('Eroare pornire pontaj:', error); alert('Pontajul nu a putut fi pornit.'); }
             finally { isActionProcessing = false; }
         }
 

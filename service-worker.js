@@ -1,20 +1,13 @@
-const CACHE_NAME = 'panel-ios-v14-stable-menu-3-6-0';
+const CACHE_NAME = 'panel-ios-v12-panel-3-5-1';
 const APP_SHELL = [
   './login.html',
-  './organizatie-bun-venit.html',
-  './organizatie-noua.html',
-  './creare-organizatie-voucher.html',
-  './administrare-organizatie.html',
   './index.html',
-  './calculator.html',
-  './prezentare-panel.html',
   './manifest.webmanifest',
   './img/logo-192.png',
   './img/logo-512.png',
   './img/favicon.ico',
   './css/global-footer.css',
   './css/ios-app.css',
-  './css/panel-prezentare.css',
   './js/discord-config.js',
   './js/supabase-config.js',
   './js/project-version.js',

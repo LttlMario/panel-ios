@@ -1,6 +1,5 @@
 import {createClient} from 'jsr:@supabase/supabase-js@2';
 import {requirePanelSession} from '../_shared/panel-session.ts';
-import {isPlatformAdminDiscordId} from '../_shared/platform-admin.ts';
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-panel-session','Content-Type':'application/json'};
 
 const reply=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:cors});
@@ -23,7 +22,8 @@ const du = {
 
 const organizationId = session.organization_id;
 
-const isPlatformAdmin = isPlatformAdminDiscordId(session.discord_id);
+const isPlatformAdmin =
+    Number(session.permission_level || 0) >= 99;
 const { data: permissionSettings, error: permissionSettingsError } =
     await db
         .from('app_settings')

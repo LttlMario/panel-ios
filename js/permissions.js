@@ -8,7 +8,6 @@ const Roles = {
 };
 
 const STORAGE_KEY = 'discord_user';
-const PLATFORM_ADMIN_DISCORD_ID = '247012210021236738';
 
 const AdministrativePages = new Set([
     'admin.html',
@@ -17,7 +16,8 @@ const AdministrativePages = new Set([
     'discord-configurare.html',
     'organizatii.html',
     'vouchere.html',
-    'developer.html'
+    'developer.html',
+    'administrare-organizatie.html'
 ]);
 
 
@@ -60,8 +60,22 @@ function isPlatformAdmin() {
         return false;
     }
 
-    // Administratorul platformei este un cont fix, nu un rol Discord.
-    return String(user.discord_id ?? user.id ?? user.user_id ?? '').trim() === PLATFORM_ADMIN_DISCORD_ID;
+    /*
+     * platform_admin este sistemul nou.
+     *
+     * permission_level >= 99 răm�ne momentan doar ca
+     * fallback pentru sesiunile vechi / compatibilitate.
+     */
+    const platformAdminFlag =
+        user.platform_admin ??
+        user.is_platform_admin ??
+        user.isPlatformAdmin;
+
+    return (
+        platformAdminFlag === true ||
+        String(platformAdminFlag).toLowerCase() === 'true' ||
+        Number(user.permission_level) >= 99
+    );
 }
 
 
@@ -106,12 +120,6 @@ function canAccessPage(page) {
      */
     if (isPlatformAdmin()) {
         return true;
-    }
-
-    // Pagina este lăsată să se încarce pentru verificarea proprietarului;
-    // accesul efectiv este decis server-side de manage-owned-organization.
-    if (page === 'administrare-organizatie.html') {
-        return isLogged();
     }
 
     /*
@@ -479,10 +487,6 @@ function getDefaultAllowedPage() {
         !isPlatformAdmin() &&
         !hasSelectedPages()
     ) {
-
-        if (currentPage === 'administrare-organizatie.html') {
-            return;
-        }
 
         const token =
             localStorage.getItem(
