@@ -1,4 +1,4 @@
-const CACHE_NAME = 'panel-ios-v13-panel-3-11-5';
+const CACHE_NAME = 'panel-ios-v14-panel-3-11-5';
 const APP_SHELL = [
   './login.html',
   './index.html',
@@ -13,7 +13,14 @@ const APP_SHELL = [
   './js/project-version.js',
   './js/global-footer.js',
   './js/ios-runtime.js',
-  './js/panel-layout.js'
+  './js/panel-layout.js',
+  './vendor/leaflet/leaflet.css',
+  './vendor/leaflet/leaflet.js',
+  './vendor/leaflet/images/layers-2x.png',
+  './vendor/leaflet/images/layers.png',
+  './vendor/leaflet/images/marker-icon-2x.png',
+  './vendor/leaflet/images/marker-icon.png',
+  './vendor/leaflet/images/marker-shadow.png'
 ];
 
 self.addEventListener('install', event => {
