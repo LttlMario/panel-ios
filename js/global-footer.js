@@ -121,12 +121,13 @@
     </div>
     `;
 
-    if (document.documentElement.classList.contains("panel-ios-device")) {
+    const iosDevice = /iPad|iPhone|iPod/i.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (document.documentElement.classList.contains("panel-ios-device") || iosDevice) {
       footer.querySelector(".pgf-android-badge")?.remove();
     }
 
     const standalone = window.matchMedia?.('(display-mode: standalone)')?.matches || navigator.standalone === true;
-    const iosDevice = /iPad|iPhone|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     if (standalone && iosDevice) footer.classList.add('pgf-ios-installed');
 
     findFooterHost().appendChild(footer);
