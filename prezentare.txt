@@ -1,20 +1,22 @@
-Pachete Panel by Little Mario
+Prezentare Panel
+
+Panelul oferă organizației un sistem complet de administrare, comunicare și gestionare a activităților, conectat la aplicația albastră și configurat în funcție de necesități.
 
 Pachet Standard
 
-Ideal pentru organizații mici și medii.
+Pachetul Standard este recomandat organizațiilor mici și medii care au nevoie de un panel complet și ușor de administrat.
 
 Include:
 
-1 server al aplicației albastre;
+1 server Discord conectat la panel;
 
-maximum 6 roluri;
+maximum 10 roluri configurabile;
 
 numele și codul organizației;
 
 adresă de lucru pentru contracte;
 
-logo și banner;
+logo și banner personalizat;
 
 Dashboard;
 
@@ -28,7 +30,7 @@ Calculator;
 
 Bucătărie;
 
-Craft Mecanics;
+Craft Mecanic;
 
 Marketplace;
 
@@ -40,7 +42,7 @@ Asistent;
 
 webhook-uri pentru funcțiile principale;
 
-perioadă limitată sau nelimitată;
+perioadă de activare limitată sau nelimitată;
 
 suspendare și reactivare;
 
@@ -48,13 +50,33 @@ notificări înainte de expirare;
 
 administrarea organizației proprii;
 
-configurarea paginilor pentru fiecare rol.
+configurarea paginilor și permisiunilor pentru fiecare rol;
 
-Pachet Premium / Full
+vouchere unice;
 
-Include toate funcțiile din Standard, plus:
+activare pe ID-ul serverului;
 
-2 servere ale aplicației albastre: principal și secundar;
+protecție împotriva reutilizării voucherelor;
+
+păstrarea organizației și a datelor după expirare;
+
+statusuri Draft, Activă, Grație și Pauză;
+
+reactivare fără pierderea datelor.
+
+Ofertă promoțională pentru prima lună: 2.160 Gold sau 1.080.000$.
+
+Începând cu luna a doua, tariful Standard este de 4.000 Gold sau 2.000.000$ pe lună.
+
+Pachetul Standard este potrivit pentru o organizație care dorește toate funcțiile importante într-o singură structură, cu o configurare simplă și eficientă.
+
+Pachet Full
+
+Pachetul Full este destinat organizațiilor mai mari sau celor care au nevoie de mai mult control, flexibilitate și posibilități de extindere.
+
+Include toate funcțiile din pachetul Standard, plus:
+
+2 servere Discord conectate la panel: principal și secundar;
 
 roluri nelimitate;
 
@@ -66,9 +88,9 @@ configurare avansată pentru Marketplace și resursele organizației;
 
 sincronizare avansată a rolurilor;
 
-audit extins;
-
 administrare avansată a membrilor;
+
+audit extins;
 
 diagnostic complet;
 
@@ -82,26 +104,40 @@ import și export de configurație;
 
 branding complet pentru organizație;
 
-posibilitate de extindere fără schimbarea structurii organizației.
+posibilitatea de extindere fără modificarea structurii organizației;
+
+configurare avansată a accesului pe roluri;
+
+funcții avansate cu acces controlat, în funcție de permisiunile organizației.
+
+Ofertă promoțională pentru prima lună: 4.440 Gold sau 2.220.000$.
+
+Începând cu luna a doua, tariful Full este de 6.000 Gold sau 3.000.000$ pe lună.
+
+Pachetul Full este recomandat organizațiilor care folosesc mai multe structuri, au mai multe roluri și doresc o administrare mai complexă și mai bine automatizată.
 
 Siguranță și administrare
 
 Ambele pachete beneficiază de:
 
-vouchere unice;
+activare controlată prin voucher;
 
-activare pe ID-ul serverului;
+configurare individuală pentru fiecare organizație;
 
-protecție împotriva reutilizării voucherelor;
+permisiuni separate pentru fiecare rol;
 
-organizație păstrată la expirare;
+notificări automate;
 
-statusuri Draft, Activă, Grație și Pauză;
+posibilitatea de suspendare și reactivare;
 
-reactivare fără pierderea datelor;
+păstrarea datelor organizației;
 
-configurare individuală a accesului pe roluri.
+administrare centralizată din panel;
 
-Contact
+integrare cu serverele Discord;
 
-Little MarioTelefon: 765 4321
+posibilitatea de personalizare în funcție de necesitățile organizației.
+
+Diferența principală este nivelul de extindere: Standard oferă o structură completă pentru un singur server Discord, iar Full oferă două servere Discord, roluri nelimitate și funcții avansate de administrare și automatizare.
+
+Pentru activare, este necesară configurarea organizației, alegerea pachetului și asocierea serverului sau serverelor Discord la panel.

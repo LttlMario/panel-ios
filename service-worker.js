@@ -1,4 +1,4 @@
-const CACHE_NAME = 'panel-ios-v12-panel-3-5-1';
+const CACHE_NAME = 'panel-ios-v13-panel-3-11-5';
 const APP_SHELL = [
   './login.html',
   './index.html',

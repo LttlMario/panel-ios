@@ -1,40 +1,79 @@
-<!DOCTYPE html>
-<html lang="ro" class="dark">
+<!doctype html>
+<html lang="ro">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#020617">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="apple-touch-icon" href="img/logo-180.png">
-  <link rel="stylesheet" href="css/tailwind.css">
-  <link rel="stylesheet" href="css/ios-app.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070b14">
+  <meta name="description" content="Instalează Panel Pro pe iPhone sau iPad direct din Safari.">
+  <title>Instalare iOS · Panel Pro</title>
   <link rel="icon" href="img/favicon.ico">
-  <script src="js/ios-runtime.js"></script>
-  <title>Instalează Panel pe iPhone</title>
+  <link rel="apple-touch-icon" href="img/logo-180.png">
+  <link rel="stylesheet" href="css/panel-prezentare.css">
+  <link rel="stylesheet" href="css/panel-install.css">
+  <script src="js/text-normalizer.js?v=1.0.0"></script>
 </head>
-<body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
-  <main class="mx-auto max-w-4xl px-5 py-10 sm:py-16">
-    <section class="text-center">
-      <img src="img/logo-192.png" alt="Pictograma aplicației Panel" class="mx-auto h-28 w-28 rounded-3xl shadow-2xl shadow-emerald-950/40">
-      <p class="mt-7 text-xs font-bold uppercase tracking-[.24em] text-emerald-400">Panel pentru iPhone</p>
-      <h1 class="mt-3 text-4xl font-black sm:text-5xl">Instalează fără App Store</h1>
-      <p class="mx-auto mt-5 max-w-2xl leading-7 text-slate-300">Panel se instalează ca aplicație web direct din Safari. Este gratuit, apare pe ecranul principal și folosește același cont Discord ca versiunea web.</p>
-      <p class="mt-3 text-sm font-semibold text-emerald-300">Versiunea actuală: v3.5.0 · actualizată la 8 august 2026</p>
-    </section>
+<body class="install-page">
+  <div class="page-shell">
+    <header class="site-header">
+      <a class="brand" href="index.html" aria-label="Panel Pro - pagina principală">
+        <img src="img/logo-192.png" alt="">
+        <span>Panel <b>Pro</b></span>
+      </a>
+      <nav class="top-nav" aria-label="Navigație instalare">
+        <a href="prezentare-panel.html">Prezentare</a>
+        <a href="demo.html">Demo</a>
+        <a class="nav-cta" href="index.html">Înapoi la Panel <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
 
-    <section class="mt-12 grid gap-4 sm:grid-cols-2">
-      <article class="rounded-2xl border border-slate-800 bg-slate-900 p-6"><span class="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500 font-black text-slate-950">1</span><h2 class="mt-4 font-bold">Deschide pagina în Safari</h2><p class="mt-2 text-sm leading-6 text-slate-400">Folosește Safari, nu browserul intern din Discord sau alt browser.</p></article>
-      <article class="rounded-2xl border border-slate-800 bg-slate-900 p-6"><span class="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500 font-black text-slate-950">2</span><h2 class="mt-4 font-bold">Apasă Partajare</h2><p class="mt-2 text-sm leading-6 text-slate-400">Apasă pictograma Partajare din bara Safari.</p></article>
-      <article class="rounded-2xl border border-slate-800 bg-slate-900 p-6"><span class="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500 font-black text-slate-950">3</span><h2 class="mt-4 font-bold">Adaugă pe ecranul principal</h2><p class="mt-2 text-sm leading-6 text-slate-400">Alege „Adaugă pe ecranul principal” și confirmă.</p></article>
-      <article class="rounded-2xl border border-slate-800 bg-slate-900 p-6"><span class="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500 font-black text-slate-950">4</span><h2 class="mt-4 font-bold">Deschide aplicația</h2><p class="mt-2 text-sm leading-6 text-slate-400">Deschide pictograma Panel și conectează-te cu Discord.</p></article>
-    </section>
+    <main>
+      <section class="install-hero section-wrap">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="eyebrow-dot"></span> Aplicație web pentru iPhone</p>
+          <h1>Panel Pro, <em>ca o aplicație iOS.</em></h1>
+          <p class="hero-lead">Pe iPhone și iPad, Panel Pro se instalează direct din Safari pe ecranul principal. Nu ai nevoie de App Store: pagina se deschide rapid, ca o aplicație normală.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="index.html">Deschide Panel Pro <span aria-hidden="true">↗</span></a>
+            <a class="button button-ghost" href="descarca-android.html">Ai Android?</a>
+          </div>
+          <div class="hero-proof" aria-label="Informații instalare iOS">
+            <span><i aria-hidden="true">✓</i> Safari</span>
+            <span><i aria-hidden="true">✓</i> iPhone și iPad</span>
+            <span><i aria-hidden="true">✓</i> Fără App Store</span>
+          </div>
+        </div>
 
-    <div class="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
-      <a href="login.html" class="inline-flex min-h-13 items-center justify-center rounded-2xl bg-emerald-500 px-6 py-3 font-bold text-slate-950 hover:bg-emerald-400">Deschide Panel pentru iPhone</a>
-      <a href="https://lttlmario.github.io/panel-pro/" class="inline-flex min-h-13 items-center justify-center rounded-2xl border border-slate-700 px-6 py-3 font-bold text-slate-200 hover:bg-slate-900">Folosește versiunea web</a>
-    </div>
-  </main>
+        <div class="install-visual" aria-label="Previzualizare instalare iOS">
+          <div class="install-device">
+            <div class="install-device-bar"><span>panel.pro / ios</span><span class="install-device-status">online</span></div>
+            <div class="install-device-screen">
+              <div class="install-device-icon">iOS</div>
+              <div><small>ADĂUGARE PE ECRANUL PRINCIPAL</small><h2>Panel Pro, <em>mereu la îndemână.</em></h2></div>
+              <p>Deschide Panel Pro în Safari, folosește meniul de partajare și adaugă pagina pe Home Screen.</p>
+              <div class="install-device-progress" aria-hidden="true"><span></span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="install-section section-wrap" aria-labelledby="ios-steps-title">
+        <div class="install-section-heading">
+          <div><p class="eyebrow"><span class="eyebrow-dot"></span> Instalare pas cu pas</p><h2>Adaugă Panel Pro<br><em>pe ecranul principal.</em></h2></div>
+          <p>Instalarea iOS funcționează cel mai bine din Safari. După adăugare, Panel Pro se deschide într-o fereastră dedicată.</p>
+        </div>
+        <div class="install-steps">
+          <article class="install-step"><span class="install-step-number">01</span><h3>Deschide în Safari</h3><p>Apasă „Deschide Panel Pro” și verifică să folosești Safari, nu un browser deschis în Discord sau în altă aplicație.</p></article>
+          <article class="install-step"><span class="install-step-number">02</span><h3>Apasă Partajare</h3><p>În bara de jos a Safari, apasă pictograma Partajare — pătratul cu săgeata în sus.</p></article>
+          <article class="install-step"><span class="install-step-number">03</span><h3>Adaugă pe ecranul principal</h3><p>Derulează opțiunile și alege „Adaugă pe ecranul principal”.</p></article>
+          <article class="install-step install-step-warning"><span class="install-step-number">04</span><h3>Confirmă adăugarea</h3><p>Verifică numele Panel Pro și apasă „Adaugă” în colțul din dreapta sus.</p></article>
+          <article class="install-step"><span class="install-step-number">05</span><h3>Deschide aplicația</h3><p>Găsește pictograma Panel Pro pe Home Screen și conectează-te cu Discord.</p></article>
+        </div>
+        <div class="install-note"><span class="install-note-mark" aria-hidden="true">i</span><div><strong>Dacă nu vezi opțiunea „Adaugă pe ecranul principal”</strong><p>Asigură-te că pagina este deschisă în Safari și că nu folosești modul privat. Pe unele versiuni iOS, opțiunea se găsește mai jos în meniul Partajare.</p></div></div>
+      </section>
+    </main>
+
+    <footer class="presentation-footer install-footer"><div class="footer-brand"><img src="img/logo-32.png" alt=""><span>Panel <b>Pro</b><small>Panel by Little Mario</small></span></div><p>Administrare mai clară. Organizații mai bine conectate.</p><a class="footer-note" href="descarca-android.html">Instalare Android ↗</a></footer>
+  </div>
+  <script src="js/project-version.js?v=3.11.5"></script>
 </body>
 </html>
