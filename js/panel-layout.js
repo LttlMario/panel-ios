@@ -197,26 +197,29 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
         sidebar.appendChild(toggle);
 
         const applyCollapsedState = (collapsed) => {
-            sidebar.style.width = collapsed ? '5.25rem' : originalSidebarWidth;
-            if (main?.classList.contains('ml-72')) main.style.marginLeft = collapsed ? '5.25rem' : originalMainMargin;
+            const isMobileViewport = window.innerWidth <= 767;
+            const effectiveCollapsed = !isMobileViewport && collapsed;
+            sidebar.style.width = isMobileViewport ? '' : (effectiveCollapsed ? '5.25rem' : originalSidebarWidth);
+            sidebar.style.flexBasis = isMobileViewport ? '' : (effectiveCollapsed ? '5.25rem' : originalSidebarWidth);
+            if (main?.classList.contains('ml-72')) main.style.marginLeft = isMobileViewport ? '' : (effectiveCollapsed ? '5.25rem' : originalMainMargin);
             const mapApp = document.getElementById('app');
             if (mapApp && document.getElementById('map-container-wrapper')) {
-                mapApp.style.gridTemplateColumns = collapsed ? '5.25rem 1fr' : '288px 1fr';
+                mapApp.style.gridTemplateColumns = isMobileViewport ? '1fr' : (effectiveCollapsed ? '5.25rem 1fr' : '288px 1fr');
             }
 
             navigation.querySelectorAll('a').forEach((link) => {
                 const label = link.querySelector('span:nth-child(2)');
-                if (label) label.classList.toggle('hidden', collapsed);
-                link.classList.toggle('justify-center', collapsed);
-                link.classList.toggle('px-3', collapsed);
-                link.classList.toggle('space-x-3', !collapsed);
-                link.title = collapsed ? (label?.textContent || '').trim() : '';
+                if (label) label.classList.toggle('hidden', effectiveCollapsed);
+                link.classList.toggle('justify-center', effectiveCollapsed);
+                link.classList.toggle('px-3', effectiveCollapsed);
+                link.classList.toggle('space-x-3', !effectiveCollapsed);
+                link.title = effectiveCollapsed ? (label?.textContent || '').trim() : '';
             });
             const title = sidebar.querySelector('h1');
-            if (title) title.classList.toggle('hidden', collapsed);
-            sidebar.querySelectorAll('#user-display-name, #user-role').forEach((element) => element.classList.toggle('hidden', collapsed));
-            toggle.textContent = collapsed ? '›' : '‹';
-        toggle.setAttribute('aria-label', collapsed ? 'Extinde meniul' : 'Micșorează meniul');
+            if (title) title.classList.toggle('hidden', effectiveCollapsed);
+            sidebar.querySelectorAll('#user-display-name, #user-role').forEach((element) => element.classList.toggle('hidden', effectiveCollapsed));
+            toggle.textContent = effectiveCollapsed ? '›' : '‹';
+            toggle.setAttribute('aria-label', effectiveCollapsed ? 'Extinde meniul' : 'Micșorează meniul');
         };
 
         const savedState = localStorage.getItem(COLLAPSE_KEY) === 'true';
