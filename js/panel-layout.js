@@ -18,6 +18,14 @@
         document.head.appendChild(runtime);
     }
 })();
+const panelNativeAndroid = /Android/i.test(navigator.userAgent || '') && (
+    window.Capacitor?.isNativePlatform?.() === true || /;\s*wv\)/i.test(navigator.userAgent || '')
+);
+if (panelNativeAndroid) document.documentElement.classList.add('panel-android-native');
+window.panelCloseLegacyMobileMenu = window.panelCloseLegacyMobileMenu || function panelCloseLegacyMobileMenu() {
+    document.getElementById('mobile-menu')?.classList.add('-translate-x-full');
+    document.getElementById('mobile-menu-backdrop')?.classList.add('hidden');
+};
 if (document.head && !document.head.querySelector('meta[http-equiv="Content-Security-Policy"]')) {
     const panelCsp = document.createElement('meta');
     panelCsp.httpEquiv = 'Content-Security-Policy';
@@ -299,7 +307,7 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
                 footer { padding-left:12px !important; padding-right:12px !important; padding-bottom:max(18px,env(safe-area-inset-bottom)) !important; }
                 #panel-save-reminder { right:10px; bottom:82px; max-width:calc(100vw - 20px); }
             }
-            /* Pe ecrane înguste sidebarul este un drawer ascuns, deschis doar prin buton. */
+            /* Pe ecrane înguste păstrăm sidebarul compact, fără să forțăm o lățime de desktop. */
             @media (max-width:767px) {
                 body.panel-global-shell { min-width:0 !important; overflow-x:hidden !important; }
                 body.panel-shared-sidebar-page { padding-left:0 !important; }
@@ -308,7 +316,43 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
                 #panel-mobile-menu { display:block !important; }
                 #panel-mobile-backdrop { display:none !important; }
                 .panel-mobile-toggle { display:flex !important; }
+                body.panel-global-shell > div:has(main) {
+                    width:100% !important;
+                    max-width:100% !important;
+                    margin-left:0 !important;
+                    padding-left:0 !important;
+                }
+                body.panel-global-shell > div:has(main) > main {
+                    width:100% !important;
+                    max-width:none !important;
+                    margin-left:0 !important;
+                }
                 body.panel-global-shell main { max-width:none !important; }
+            }
+            html.panel-android-native body.panel-global-shell { min-width:0 !important; overflow-x:hidden !important; }
+            html.panel-android-native body.panel-shared-sidebar-page { padding-left:0 !important; }
+            html.panel-android-native .panel-responsive-sidebar,
+            html.panel-android-native #panel-shared-sidebar { display:none !important; }
+            html.panel-android-native body.panel-shared-sidebar-page > #panel-shared-sidebar,
+            html.panel-android-native body.panel-shared-sidebar-page > #panel-shared-sidebar.is-collapsed { display:none !important; }
+            html.panel-android-native #panel-mobile-menu { display:block !important; }
+            html.panel-android-native #panel-mobile-backdrop { display:none !important; }
+            html.panel-android-native #panel-mobile-menu:not(.is-open) { transform:translateX(-102%) !important; }
+            html.panel-android-native .panel-mobile-toggle { display:flex !important; }
+            html.panel-android-native #app .main-sidebar { display:none !important; }
+            html.panel-android-native #map-container-wrapper .control-sidebar { display:none !important; }
+            html.panel-android-native #map-container-wrapper .control-sidebar.mobile-open { display:flex !important; }
+            html.panel-android-native #map-container-wrapper .sidebar:not(.open) { right:-420px !important; }
+            html.panel-android-native body.panel-global-shell > div:has(main) {
+                width:100% !important;
+                max-width:100% !important;
+                margin-left:0 !important;
+                padding-left:0 !important;
+            }
+            html.panel-android-native body.panel-global-shell > div:has(main) > main {
+                width:100% !important;
+                max-width:none !important;
+                margin-left:0 !important;
             }
             /* Sidebar-ul este același și pe paginile calculatorului, care au stiluri proprii. */
             #panel-shared-sidebar .nav-link,
@@ -388,6 +432,7 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
         relocateHeaderActions(currentPage);
         setupAdminSaveArea();
         const main = document.querySelector('main');
+        const pageShell = main?.closest('body > div');
         if (main) {
             main.style.minHeight = '100vh';
             // Paginile istorice aveau un offset propriu pentru sidebar.
@@ -398,7 +443,7 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
         const originalSidebarWidth = sidebar.style.width || '';
 
         const applyCollapsedState = (collapsed) => {
-            const isMobileViewport = window.innerWidth <= 767;
+            const isMobileViewport = window.innerWidth <= 767 || document.documentElement.classList.contains('panel-android-native');
             const effectiveCollapsed = !isMobileViewport && collapsed;
             const sidebarWidth = effectiveCollapsed ? '5.25rem' : (originalSidebarWidth || '245px');
             sidebar.style.width = isMobileViewport ? '' : sidebarWidth;
@@ -406,7 +451,16 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
             sidebar.classList.toggle('is-collapsed', effectiveCollapsed);
             if (main?.classList.contains('ml-72')) main.style.marginLeft = isMobileViewport ? '' : (effectiveCollapsed ? '5.25rem' : originalMainMargin);
             if (document.body.classList.contains('panel-shared-sidebar-page')) {
-                document.body.style.paddingLeft = isMobileViewport ? '' : (effectiveCollapsed ? '5.25rem' : '245px');
+                document.body.style.setProperty('padding-left', isMobileViewport ? '0px' : (effectiveCollapsed ? '5.25rem' : '245px'), isMobileViewport);
+            }
+            if (isMobileViewport) {
+                main?.style.setProperty('margin-left', '0px', 'important');
+                main?.style.setProperty('width', '100%', 'important');
+                main?.style.setProperty('max-width', 'none', 'important');
+                pageShell?.style.setProperty('margin-left', '0px', 'important');
+                pageShell?.style.setProperty('padding-left', '0px', 'important');
+                pageShell?.style.setProperty('width', '100%', 'important');
+                pageShell?.style.setProperty('max-width', '100%', 'important');
             }
             const mapApp = document.getElementById('app');
             if (mapApp && document.getElementById('map-container-wrapper')) {
@@ -436,6 +490,7 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
 
         // Dashboard are deja propriul meniu mobil, păstrat pentru compatibilitate.
         if (document.getElementById('mobile-menu')) {
+            window.panelCloseLegacyMobileMenu();
             resolveOrganizationAdminVisibility(navigation);
             return;
         }
@@ -456,10 +511,7 @@ if (location.pathname.endsWith('organizatii.html') && !window.__organizationFetc
         const closeMobileMenu = () => {
             mobileMenu.classList.remove('is-open');
             backdrop.style.display = 'none';
-            const legacyMenu = document.getElementById('mobile-menu');
-            const legacyBackdrop = document.getElementById('mobile-menu-backdrop');
-            legacyMenu?.classList.add('-translate-x-full');
-            legacyBackdrop?.classList.add('hidden');
+            window.panelCloseLegacyMobileMenu();
             document.body.classList.remove('panel-mobile-menu-open');
             document.body.style.overflow = '';
         };
