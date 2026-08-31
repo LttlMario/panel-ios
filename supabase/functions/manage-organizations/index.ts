@@ -7,6 +7,35 @@ import { getPlatformSecret } from '../_shared/platform-secrets.ts';
 const headers={'Access-Control-Allow-Origin':'https://lttlmario.github.io','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-panel-session','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Max-Age':'86400','Content-Type':'application/json'};
 const reply=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers});
 const audit=async(db:any,session:any,action:string,targetId:string,details:unknown={})=>{await db.from('admin_audit_log').insert({organization_id:targetId,actor_discord_id:session.discord_id,action,target_type:'organization',target_id:targetId,details});};
+const synchronizePackageExpiration=async(db:any,organizationId:string,expiresAt:string|null)=>{
+  const {data:packageSetting,error:packageError}=await db.from('app_settings').select('value').eq('organization_id',organizationId).eq('key','organization_package').maybeSingle();
+  if(packageError)throw packageError;
+  if(!packageSetting||packageSetting.value?.unlimited===true)return;
+  const packageValue={...(packageSetting.value||{}),expires_at:expiresAt};
+  const {error}=await db.from('app_settings').upsert({organization_id:organizationId,key:'organization_package',value:packageValue,updated_at:new Date().toISOString()},{onConflict:'organization_id,key'});
+  if(error)throw error;
+};
+const updateOrganizationAccess=async(db:any,session:any,organizationId:string,expiresAt:string|null,requestedActive:boolean,action='organization_access_changed')=>{
+  const {data:previousAccess,error:previousAccessError}=await db.from('app_settings').select('value').eq('organization_id',organizationId).eq('key','organization_access').maybeSingle();
+  if(previousAccessError)throw previousAccessError;
+  const now=new Date().toISOString();
+  const expired=Boolean(expiresAt&&Date.parse(expiresAt)<=Date.now());
+  const effectiveActive=requestedActive&&!expired;
+  const {data:organization,error:organizationError}=await db.from('organizations').update({
+    active:effectiveActive,
+    deactivation_reason:effectiveActive?null:expired?'expired':'manual',
+    deactivated_at:effectiveActive?null:now,
+    deactivated_by_discord_id:effectiveActive?null:session.discord_id,
+    updated_at:now
+  }).eq('id',organizationId).select('id').maybeSingle();
+  if(organizationError)throw organizationError;
+  if(!organization)throw new Error('Organizația nu există.');
+  const {error:accessError}=await db.from('app_settings').upsert({organization_id:organizationId,key:'organization_access',value:{expires_at:expiresAt},updated_at:now},{onConflict:'organization_id,key'});
+  if(accessError)throw accessError;
+  await synchronizePackageExpiration(db,organizationId,expiresAt);
+  await audit(db,session,action,organizationId,{active:effectiveActive,expires_at:expiresAt,previous_expires_at:previousAccess?.value?.expires_at||null});
+  return {active:effectiveActive,expires_at:expiresAt};
+};
 const slugify=(value:string)=>value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,60);
 const webhookChannels=new Set([
   'organization',
@@ -26,12 +55,17 @@ const webhookChannels=new Set([
   'warnings_departments',
   'sanctions_organization',
   'sanctions_departments',
+  'actions_organization',
   'status_live',
-  'organization_expiration'
+  'organization_expiration',
+  'stash',
+  'stash_requests',
+  'stash_donations'
 ]);
 const discordBotHeaders=(bot:string)=>({Authorization:`Bot ${bot}`,'User-Agent':'PanelManagement/1.0 (+https://panel-management.netlify.app)'});
 const organizationIdPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validOrganizationId=(value:unknown)=>organizationIdPattern.test(String(value||'').trim());
+const seasonalThemeCodes=new Set(['none','winter','christmas','easter','autumn','halloween','summer','spring']);
 const nowIso=()=>new Date().toISOString();
 const getClientIp=(request:Request)=>String(request.headers.get('cf-connecting-ip')||request.headers.get('x-forwarded-for')?.split(',')[0]||'unknown').trim().slice(0,120);
 const webhookFeature=(channel:string)=>{
@@ -41,6 +75,7 @@ const webhookFeature=(channel:string)=>{
   if(channel==='requests_departments')return 'requests_departments';
   if(['warnings_organization','sanctions_organization','fines_organization'].includes(channel))return 'discipline_organization';
   if(['warnings_departments','sanctions_departments','fines_departments'].includes(channel))return 'discipline_departments';
+  if(channel==='actions_organization')return 'actions_organization';
   if(channel==='illegal_marketplace')return 'illegal_marketplace';
   return null;
 };
@@ -150,14 +185,14 @@ Deno.serve(async request=>{
       });
     }
     if(body.action==='platform_overview'){
-      const {data:organizations,error:organizationsError}=await db.from('organizations').select('id,name,slug,code,lifecycle_status,active,grace_until,created_at,updated_at').order('name');
+      const {data:organizations,error:organizationsError}=await db.from('organizations').select('id,name,slug,code,lifecycle_status,active,grace_until,deactivation_reason,deactivated_at,deactivated_by_discord_id,last_discord_check_at,last_discord_check_status,created_at,updated_at').order('name');
       if(organizationsError)throw organizationsError;
       const ids=(organizations||[]).map((organization:any)=>organization.id);
       const [{data:guildRows,error:guildError},{data:roleRows,error:roleError},{data:settingsRows,error:settingsError},{data:appRows,error:appError}]=await Promise.all([
         ids.length?db.from('organization_guilds').select('organization_id,guild_id,guild_name,kind,enabled').in('organization_id',ids):Promise.resolve({data:[],error:null}),
         ids.length?db.from('organization_role_mappings').select('organization_id,guild_id,discord_role_id,discord_role_name,panel_role,enabled').in('organization_id',ids):Promise.resolve({data:[],error:null}),
         ids.length?db.from('organization_settings').select('organization_id,discord_client_id,panel_public_url,webhook_routes,updated_at').in('organization_id',ids):Promise.resolve({data:[],error:null}),
-        ids.length?db.from('app_settings').select('organization_id,key,value,updated_at').in('organization_id',ids).in('key',['organization_access','organization_package','page_permissions','action_permissions','discipline_permissions']):Promise.resolve({data:[],error:null})
+        ids.length?db.from('app_settings').select('organization_id,key,value,updated_at').in('organization_id',ids).in('key',['organization_access','organization_package','organization_theme','page_permissions','action_permissions','discipline_permissions']):Promise.resolve({data:[],error:null})
       ]);
       if(guildError||roleError||settingsError||appError)throw guildError||roleError||settingsError||appError;
       const now=Date.now();
@@ -179,6 +214,7 @@ Deno.serve(async request=>{
         if(lastAudit.error)throw lastAudit.error;
         const access=app.organization_access&&typeof app.organization_access==='object'?app.organization_access:{};
         const packageValue=app.organization_package&&typeof app.organization_package==='object'?app.organization_package:{};
+        const themeValue=app.organization_theme&&typeof app.organization_theme==='object'?app.organization_theme:{};
         const expiresAt=String(access.expires_at||'').trim()||null;
         const isExpired=Boolean(expiresAt&&Date.parse(expiresAt)<=now);
         const isDraft=organization.lifecycle_status==='draft';
@@ -197,6 +233,7 @@ Deno.serve(async request=>{
           ...organization,
           access:{expires_at:expiresAt},
           package:{code:['standard','operations','full'].includes(String(packageValue.code))?String(packageValue.code):'standard',unlimited:packageValue.unlimited===true,expires_at:packageValue.expires_at||null,features:resolvePackageFeatures(packageValue)},
+          theme:{enabled:themeValue.enabled===true,code:seasonalThemeCodes.has(String(themeValue.code||''))?String(themeValue.code):'none',intensity:['discreet','normal','intense'].includes(String(themeValue.intensity||''))?String(themeValue.intensity):'normal',updated_at:themeValue.updated_at||null},
           guilds:guilds.map((guild:any)=>({guild_id:guild.guild_id,guild_name:guild.guild_name,kind:guild.kind,enabled:guild.enabled!==false})),
           roles:roles.map((role:any)=>({guild_id:role.guild_id,discord_role_id:role.discord_role_id,discord_role_name:role.discord_role_name,panel_role:role.panel_role,enabled:role.enabled!==false})),
           metrics:{members,active_sessions:activeSessions,active_shifts:activeShifts,active_absences:activeAbsences,audit_events:auditCount,last_audit:lastAudit.data||null},
@@ -441,7 +478,7 @@ if (settingsError) {
   throw settingsError;
 }
       await db.from('app_settings').upsert({organization_id:organizationId,key:'pontaj_config',value:{maxHours:12,dayEndTime:'19:59',nightEndTime:'23:00',excludeBreaks:false}},{onConflict:'organization_id,key'});
-      if(body.access){const expiresAt=String(body.access.expires_at||'').trim();if(expiresAt&&Number.isNaN(Date.parse(expiresAt)))throw new Error('Data expirării este invalidă.');const {error}=await db.from('app_settings').upsert({organization_id:organizationId,key:'organization_access',value:{expires_at:expiresAt||null},updated_at:new Date().toISOString()},{onConflict:'organization_id,key'});if(error)throw error;if(!expiresAt||Date.parse(expiresAt)>Date.now())await db.from('organizations').update({active:true,updated_at:new Date().toISOString()}).eq('id',organizationId);}
+      if(body.access){const expiresAt=String(body.access.expires_at||'').trim()||null;if(expiresAt&&Number.isNaN(Date.parse(expiresAt)))throw new Error('Data expirării este invalidă.');await updateOrganizationAccess(db,session,organizationId,expiresAt,true);}
       if(body.contract_template){const title=String(body.contract_template.title||'').trim(),template=String(body.contract_template.template||'').trim();if(title.length<2)throw new Error('Numele contractului este obligatoriu.');if(template.length<20)throw new Error('Textul contractului este prea scurt.');const allowed=['{{COMPANY}}','{{ADDRESS}}','{{MANAGER}}','{{EMPLOYEE_NAME}}','{{CNP}}','{{PHONE}}','{{POSITION}}','{{SALARY}}','{{PROGRAM}}','{{START_DATE}}','{{CONTRACT_NUMBER}}'];const unknown=[...template.matchAll(/{{[A-Z0-9_]+}}/g)].map(match=>match[0]).filter(value=>!allowed.includes(value));if(unknown.length)throw new Error(`Câmpuri necunoscute în contract: ${[...new Set(unknown)].join(', ')}`);const defaults=body.contract_template.defaults&&typeof body.contract_template.defaults==='object'?body.contract_template.defaults:{};const {error}=await db.from('app_settings').upsert({organization_id:organizationId,key:'contract_template',value:{title,template,defaults:{salary:String(defaults.salary||'').trim()||null}},updated_at:new Date().toISOString()},{onConflict:'organization_id,key'});if(error)throw error;}
       if(body.page_permissions && typeof body.page_permissions === 'object'){
   const allowedPages = new Set([
@@ -460,7 +497,8 @@ if (settingsError) {
     'minigames.html',
     'rapoarte.html',
     'status-live.html',
-    'asistent.html'
+    'asistent.html',
+    'stash.html'
   ]);
 
 
@@ -517,7 +555,16 @@ if(
     'anunturi.publish',
     'marketplace.delete',
     'cereri.organization',
-    'cereri.departments'
+    'cereri.departments',
+    'actions.organization.read',
+    'actions.organization.write',
+    'actions.organization.delete',
+    'stash.write',
+    'stash.request',
+    'stash.manage_requests',
+    'stash.donate',
+    'stash.approve_donation',
+    'stash.log'
   ]);
 
   const actionRules = Object.fromEntries(
@@ -534,6 +581,11 @@ if(
         ]
       ])
   );
+  if (!policyPackageFeatures.includes('actions_organization')) {
+    actionRules['actions.organization.read'] = [];
+    actionRules['actions.organization.write'] = [];
+    actionRules['actions.organization.delete'] = [];
+  }
   if (!policyPackageFeatures.includes('requests_organization')) actionRules['cereri.organization'] = [];
 
   // Un rol de cereri poate avea o singură destinație. Păstrăm aceeași
@@ -818,11 +870,11 @@ if (Array.isArray(body.roles)) {
       const {error}=await db.from('app_settings').upsert({organization_id:organizationId,key:'organization_package',value:{code,unlimited,expires_at:expiresAt,features},updated_at:nowIso()},{onConflict:'organization_id,key'});
       if(error)throw error;
       if(code==='standard'){
-        const restricted=[['action_permissions',{...(body.action_permissions||{}),'cereri.organization':[]}],['communication_permissions',{organization:{read:[],write:[]}}],['discipline_permissions',{organization:{read:[],write:[],sanction:[]}}]] as any[];
+        const restricted=[['action_permissions',{...(body.action_permissions||{}),'cereri.organization':[],'actions.organization.read':[],'actions.organization.write':[],'actions.organization.delete':[],'stash.write':[],'stash.request':[],'stash.manage_requests':[],'stash.donate':[],'stash.approve_donation':[],'stash.log':[]}],['communication_permissions',{organization:{read:[],write:[]}}],['discipline_permissions',{organization:{read:[],write:[],sanction:[]}}]] as any[];
         for(const [key,value] of restricted){
           const {data:existing}=await db.from('app_settings').select('value').eq('organization_id',organizationId).eq('key',key).maybeSingle();
           if(!existing)continue;
-          const next=key==='action_permissions'?{...(existing.value||{}),'cereri.organization':[]}:{...(existing.value||{}),organization:value.organization};
+          const next=key==='action_permissions'?{...(existing.value||{}),'cereri.organization':[],'actions.organization.read':[],'actions.organization.write':[],'actions.organization.delete':[],'stash.write':[],'stash.request':[],'stash.manage_requests':[],'stash.donate':[],'stash.approve_donation':[],'stash.log':[]}:{...(existing.value||{}),organization:value.organization};
           const {error:permissionError}=await db.from('app_settings').update({value:next,updated_at:nowIso()}).eq('organization_id',organizationId).eq('key',key);
           if(permissionError)throw permissionError;
         }
@@ -838,16 +890,16 @@ if (Array.isArray(body.roles)) {
         }
       }
       if(code==='standard'){
-        const visiblePages=new Set(['index.html','pontaj.html']);
+        const fullOnlyPages=new Set(['calculatorilegal.html','locatiiilegale.html','marketplace-ilegal.html','minigames.html','stash.html']);
         for(const key of ['page_permissions','assistant_page_permissions']){
           const {data:existing}=await db.from('app_settings').select('value').eq('organization_id',organizationId).eq('key',key).maybeSingle();
           if(!existing||!existing.value||typeof existing.value!=='object')continue;
-          const value=Object.fromEntries(Object.entries(existing.value).filter(([page])=>visiblePages.has(page)||packagePageAllowed(page,{code})));
+          const value=Object.fromEntries(Object.entries(existing.value).filter(([page])=>!fullOnlyPages.has(page)));
           const {error:permissionError}=await db.from('app_settings').update({value,updated_at:nowIso()}).eq('organization_id',organizationId).eq('key',key);
           if(permissionError)throw permissionError;
         }
       }
-      if(code==='operations'){
+      if(code!=='full'){
         const visiblePages=new Set(['index.html','pontaj.html']);
         for(const key of ['page_permissions','assistant_page_permissions']){
           const {data:existing}=await db.from('app_settings').select('value').eq('organization_id',organizationId).eq('key',key).maybeSingle();
@@ -877,14 +929,24 @@ if (Array.isArray(body.roles)) {
     }
     if(body.action==='extend'){
       const organizationId=String(body.organization_id||'').trim(),expiresAt=String(body.expires_at||'').trim();if(!validOrganizationId(organizationId)||Number.isNaN(Date.parse(expiresAt))||Date.parse(expiresAt)<=Date.now())return reply({error:'Alege o dată viitoare pentru prelungire.'},400);
-      const {data,error}=await db.from('organizations').update({active:true,updated_at:new Date().toISOString()}).eq('id',organizationId).select('id').maybeSingle();if(error)throw error;if(!data)return reply({error:'Organizația nu există.'},404);
-      const {error:settingError}=await db.from('app_settings').upsert({organization_id:organizationId,key:'organization_access',value:{expires_at:expiresAt},updated_at:nowIso()},{onConflict:'organization_id,key'});if(settingError)throw settingError;await audit(db,session,'organization_access_extended',organizationId,{expires_at:expiresAt});return reply({ok:true,expires_at:expiresAt});
+      const result=await updateOrganizationAccess(db,session,organizationId,expiresAt,true,'organization_access_extended');return reply({ok:true,active:result.active,expires_at:expiresAt});
     }
     if(body.action==='set_access'){
-      const organizationId=String(body.organization_id||'').trim(),expiresAt=String(body.expires_at||'').trim(),active=body.active!==false;
+      const organizationId=String(body.organization_id||'').trim(),expiresAt=String(body.expires_at||'').trim()||null,active=body.active!==false;
       if(!validOrganizationId(organizationId))return reply({error:'ID-ul organizației este invalid.'},400);if(expiresAt&&Number.isNaN(Date.parse(expiresAt)))return reply({error:'Data expirării este invalidă.'},400);
-      const effectiveActive=active&&(!expiresAt||Date.parse(expiresAt)>Date.now());const {data,error}=await db.from('organizations').update({active:effectiveActive,updated_at:new Date().toISOString()}).eq('id',organizationId).select('id').maybeSingle();if(error)throw error;if(!data)return reply({error:'Organizația nu există.'},404);
-      const {error:settingError}=await db.from('app_settings').upsert({organization_id:organizationId,key:'organization_access',value:{expires_at:expiresAt||null},updated_at:nowIso()},{onConflict:'organization_id,key'});if(settingError)throw settingError;await audit(db,session,'organization_access_changed',organizationId,{active:effectiveActive,expires_at:expiresAt||null});return reply({ok:true,active:effectiveActive,expires_at:expiresAt||null});
+      const result=await updateOrganizationAccess(db,session,organizationId,expiresAt,active);return reply({ok:true,active:result.active,expires_at:expiresAt});
+    }
+    if(body.action==='set_theme'){
+      const organizationId=String(body.organization_id||'').trim(),enabled=body.enabled===true,requestedCode=String(body.theme||'none').trim().toLowerCase(),intensity=['discreet','normal','intense'].includes(String(body.intensity||''))?String(body.intensity):'normal';
+      if(!validOrganizationId(organizationId))return reply({error:'ID-ul organizației este invalid.'},400);
+      if(!seasonalThemeCodes.has(requestedCode))return reply({error:'Tema aleasă nu este disponibilă.'},400);
+      const theme={enabled,code:enabled&&requestedCode!=='none'?requestedCode:'none',intensity,updated_at:nowIso()};
+      const {data:organization,error:organizationError}=await db.from('organizations').select('id').eq('id',organizationId).maybeSingle();
+      if(organizationError)throw organizationError;if(!organization)return reply({error:'Organizația nu există.'},404);
+      const {error}=await db.from('app_settings').upsert({organization_id:organizationId,key:'organization_theme',value:theme,updated_at:theme.updated_at},{onConflict:'organization_id,key'});
+      if(error)throw error;
+      await audit(db,session,'organization_theme_changed',organizationId,{enabled:theme.enabled,theme:theme.code,intensity:theme.intensity});
+      return reply({ok:true,theme});
     }
     if(body.action==='delete'){
       const organizationId=String(body.organization_id||'').trim();

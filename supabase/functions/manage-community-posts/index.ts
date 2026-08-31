@@ -2,10 +2,12 @@ import {createClient} from 'jsr:@supabase/supabase-js@2.112.3';
 import {requirePanelSession} from '../_shared/panel-session.ts';
 import {isPlatformAdminAccount} from '../_shared/platform-admin.ts';
 import {resolvePackageFeatures} from '../_shared/package-features.ts';
-const cors={'Access-Control-Allow-Origin':'https://lttlmario.github.io','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-panel-session','Content-Type':'application/json'};
+import {getPlatformSecret} from '../_shared/platform-secrets.ts';
+const cors={'Access-Control-Allow-Origin':'https://lttlmario.github.io','Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-panel-session','Access-Control-Max-Age':'86400','Content-Type':'application/json'};
 
 const reply=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:cors});
 const normalizeBlackMarketName=(value:unknown)=>String(value??'').replace(/^\s*\d{1,12}\s+/,'').replace(/^\s*\d{1,12}\s*[|:/#-]\s*/,'').replace(/\s*[|:/#-]\s*\d{1,12}\s*$/,'').replace(/\s+\d{1,12}\s*$/,'').replace(/\s*[[(]\s*\d{1,12}\s*[\])]\s*$/,'').replace(/\s{2,}/g,' ').trim();
+const allowedCommunityReactions=new Set(['✅','❌','👍','❤️','🤔']);
 Deno.serve(async(req)=>{if(req.method==='OPTIONS')return new Response('ok',{headers:cors});if(req.method!=='POST')return reply({error:'Method not allowed'},405);let stage='request';try{
  stage='parse_body';
  const body=await req.json();
@@ -115,8 +117,9 @@ const sessionDiscordRoleIds =
         ? session.discord_role_ids.map(String)
         : [];
 
-// Cererea de acces la Anunțuri folosește doar setările deja încărcate.
-// Nu are nevoie de mapările suplimentare folosite de celelalte acțiuni.
+// Accesul la Anunțuri nu are nevoie de fallback-ul pentru rolul organizațional
+// sau de mapările folosite de Marketplace/Disciplină. Returnăm rapid configurația
+// deja încărcată și evităm două interogări suplimentare la fiecare deschidere.
 if (body.action === 'announcement_access') {
     const announcementAudienceRoles = (audience:string, kind:'read'|'write') =>
         Array.isArray(communicationPermissions?.[audience]?.[kind])
@@ -124,10 +127,16 @@ if (body.action === 'announcement_access') {
             : [];
     const announcementCanForAudience = (audience:string, kind:'read'|'write') =>
         hasCommunicationFeature(audience) && (isPlatformAdmin || sessionDiscordRoleIds.some(roleId => announcementAudienceRoles(audience, kind).includes(roleId)));
-    const announcementPageAccess = isPlatformAdmin || sessionDiscordRoleIds.some(roleId => allowedAnnouncementRoles.includes(roleId));
-    const announcementPublishAccess = isPlatformAdmin || sessionDiscordRoleIds.some(roleId => allowedAnnouncementPublishRoles.includes(roleId));
-    const readAudiences = isPlatformAdmin ? ['organization', 'departments'] : ['organization', 'departments'].filter(audience => announcementCanForAudience(audience, 'read'));
-    const writeAudiences = isPlatformAdmin ? ['organization', 'departments'] : ['organization', 'departments'].filter(audience => announcementCanForAudience(audience, 'write'));
+    const announcementPageAccess =
+        isPlatformAdmin || sessionDiscordRoleIds.some(roleId => allowedAnnouncementRoles.includes(roleId));
+    const announcementPublishAccess =
+        isPlatformAdmin || sessionDiscordRoleIds.some(roleId => allowedAnnouncementPublishRoles.includes(roleId));
+    const readAudiences = isPlatformAdmin
+        ? ['organization', 'departments']
+        : ['organization', 'departments'].filter(audience => announcementCanForAudience(audience, 'read'));
+    const writeAudiences = isPlatformAdmin
+        ? ['organization', 'departments']
+        : ['organization', 'departments'].filter(audience => announcementCanForAudience(audience, 'write'));
     return reply({
         read: communicationSetting ? readAudiences.length > 0 : announcementPageAccess,
         write: communicationSetting ? writeAudiences.length > 0 : announcementPublishAccess,
@@ -163,15 +172,184 @@ const roleIdsFromActivePanelRole = activePanelRole
     : [];
 const effectiveDiscordRoleIds = [...new Set([...sessionDiscordRoleIds, ...roleIdsFromActivePanelRole])];
 
+const hasActionsFeature = isPlatformAdmin || packageFeatures.includes('actions_organization');
+const actionPermissionRoles = (kind:'read'|'write'|'delete') => Array.isArray(actionPermissions[`actions.organization.${kind}`]) ? actionPermissions[`actions.organization.${kind}`].map(String) : [];
+const canAction = (kind:'read'|'write'|'delete') => hasActionsFeature && (isPlatformAdmin || effectiveDiscordRoleIds.some(roleId => actionPermissionRoles(kind).includes(roleId)));
+const configuredActionGuilds = async () => {
+    const { data, error } = await db.from('organization_guilds').select('guild_id,guild_name,kind,enabled').eq('organization_id', organizationId).eq('enabled', true).order('kind');
+    if (error) throw error;
+    return (data || []).filter((item:any) => /^\d{15,22}$/.test(String(item.guild_id || '')));
+};
+const loadDiscordGuildMembers = async (guildId:string) => {
+    const botToken = await getPlatformSecret(db, 'discord_bot_token');
+    if (!botToken) throw new Error('Botul Discord nu este configurat pentru această organizație.');
+    const members:any[] = [];
+    let after = '0';
+    for (let page = 0; page < 20; page++) {
+        const query = after === '0' ? '?limit=1000' : `?limit=1000&after=${after}`;
+        const response = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members${query}`, { headers: { Authorization: `Bot ${botToken}` } });
+        if (!response.ok) throw new Error(`Membrii Guild-ului nu pot fi citiți (HTTP ${response.status}).`);
+        const batch = await response.json();
+        if (!Array.isArray(batch) || !batch.length) break;
+        members.push(...batch);
+        if (batch.length < 1000) break;
+        after = String(batch[batch.length - 1]?.user?.id || '0');
+        if (after === '0') break;
+    }
+    return members.map((member:any) => ({ discord_id: String(member?.user?.id || ''), name: String(member?.nick || member?.user?.global_name || member?.user?.username || member?.user?.id || '').trim(), username: String(member?.user?.username || '').trim() })).filter((member:any) => /^\d{15,22}$/.test(member.discord_id) && member.name);
+};
+const notifyActionDiscord = async (record:any) => {
+    const { data: settings } = await db.from('organization_settings').select('webhook_routes,panel_public_url').eq('organization_id', organizationId).maybeSingle();
+    const route = settings?.webhook_routes?.actions_organization || {};
+    const url = [route?.primary?.enabled !== false ? route?.primary?.url : '', route?.secondary?.enabled !== false ? route?.secondary?.url : ''].map((value:any) => String(value || '').trim()).find(Boolean);
+    if (!url) return null;
+    const site = String(settings?.panel_public_url || 'https://lttlmario.github.io/panel-pro').replace(/\/$/, '');
+    const participants = Array.isArray(record.participants) ? record.participants : [];
+    const response = await fetch(`${url}?wait=true`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ embeds: [{ title: `✅ Acțiune nouă: ${record.action_label}`, description: record.description || 'A fost înregistrată o acțiune a organizației.', color: 5763719, url: `${site}/anunturi.html?actions=${record.id}`, fields: [{ name: 'Tip', value: record.action_type || record.action_label, inline: true }, { name: 'Participanți', value: participants.length ? participants.map((item:any) => `• ${item.name}`).join('\n').slice(0, 1024) : 'Nespecificați' }, ...(record.notes ? [{ name: 'Note', value: String(record.notes).slice(0, 1024) }] : [])], footer: { text: `Panel Pro · ${record.created_by_name || record.created_by_discord_id}` } }] }) });
+    if (!response.ok) return null;
+    return (await response.json().catch(() => ({})))?.id || null;
+};
+if (String(body.action || '').startsWith('actions_')) {
+    if (!hasActionsFeature) return reply({ error: 'Modulul Acțiuni este disponibil în pachetul Operations sau Full.' }, 403);
+    if (body.action === 'actions_access') return reply({ enabled: true, read: canAction('read'), write: canAction('write'), delete: canAction('delete'), platform_admin: isPlatformAdmin, package_code: String(packageSetting?.value?.code || 'standard') });
+    const requiredPermission = body.action === 'actions_create' || body.action === 'actions_members' || body.action === 'actions_guilds' ? 'write' : body.action === 'actions_delete' ? 'delete' : 'read';
+    if (!canAction(requiredPermission as any)) return reply({ error: 'Nu ai permisiunea necesară pentru modulul Acțiuni.' }, 403);
+    if (body.action === 'actions_guilds') return reply({ guilds: await configuredActionGuilds() });
+    if (body.action === 'actions_members') {
+        const guildId = String(body.guild_id || '').trim();
+        if (!(await configuredActionGuilds()).some((guild:any) => String(guild.guild_id) === guildId)) return reply({ error: 'Guild-ul selectat nu aparține organizației active.' }, 403);
+        return reply({ members: await loadDiscordGuildMembers(guildId) });
+    }
+    if (body.action === 'actions_list') {
+        const { data, error } = await db.from('organization_actions').select('*').eq('organization_id', organizationId).order('created_at', { ascending: false });
+        if (error) throw error;
+        return reply({ actions: data || [], access: { read: canAction('read'), write: canAction('write'), delete: canAction('delete'), platform_admin: isPlatformAdmin }, guilds: await configuredActionGuilds() });
+    }
+    if (body.action === 'actions_create') {
+        const label = String(body.action_label || '').trim().slice(0, 120), type = String(body.action_type || '').trim().slice(0, 40), guildId = String(body.guild_id || '').trim();
+        if (label.length < 2 || !type || !/^\d{15,22}$/.test(guildId)) return reply({ error: 'Completează tipul acțiunii, denumirea și Guild-ul.' }, 400);
+        const guild = (await configuredActionGuilds()).find((item:any) => String(item.guild_id) === guildId);
+        if (!guild) return reply({ error: 'Guild-ul selectat nu aparține organizației active.' }, 403);
+        const guildMembers = await loadDiscordGuildMembers(guildId), memberMap = new Map(guildMembers.map((item:any) => [item.discord_id, item]));
+        const selectedIds = [...new Set((Array.isArray(body.participant_ids) ? body.participant_ids : []).map(String))].slice(0, 100), participants = selectedIds.map((id) => memberMap.get(id)).filter(Boolean);
+        if (selectedIds.length !== participants.length) return reply({ error: 'Unul dintre participanți nu mai este membru în Guild-ul selectat.' }, 400);
+        const { data: author } = await db.from('users').select('display_name,username').eq('discord_id', du.id).maybeSingle();
+        const { data: actionRow, error } = await db.from('organization_actions').insert({ organization_id: organizationId, action_type: type, action_label: label, description: String(body.description || '').trim().slice(0, 4000), notes: String(body.notes || '').trim().slice(0, 4000), guild_id: guildId, guild_name: String(guild.guild_name || guildId), participants, created_by_discord_id: du.id, created_by_name: author?.display_name || author?.username || du.id }).select('*').single();
+        if (error) throw error;
+        let discordMessageId = null;
+        try { discordMessageId = await notifyActionDiscord(actionRow); } catch (error) { console.error('Acțiunea a fost salvată, dar webhook-ul a eșuat:', error); }
+        if (discordMessageId) await db.from('organization_actions').update({ discord_message_id: discordMessageId }).eq('id', actionRow.id).eq('organization_id', organizationId);
+        return reply({ ok: true, action: { ...actionRow, discord_message_id: discordMessageId } });
+    }
+    if (body.action === 'actions_delete') {
+        const id = String(body.id || '').trim();
+        const { data: row, error: loadError } = await db.from('organization_actions').select('*').eq('organization_id', organizationId).eq('id', id).maybeSingle();
+        if (loadError) throw loadError;
+        if (!row) return reply({ error: 'Acțiunea nu există.' }, 404);
+        const { data: settings } = await db.from('organization_settings').select('webhook_routes').eq('organization_id', organizationId).maybeSingle();
+        const url = settings?.webhook_routes?.actions_organization?.primary?.url || settings?.webhook_routes?.actions_organization?.secondary?.url;
+        if (row.discord_message_id && url) await fetch(`${url.replace(/\/$/, '')}/messages/${encodeURIComponent(row.discord_message_id)}`, { method: 'DELETE' }).catch(() => null);
+        const { error } = await db.from('organization_actions').delete().eq('organization_id', organizationId).eq('id', id);
+        if (error) throw error;
+        return reply({ ok: true, deleted_id: id });
+    }
+}
+
 const canDeleteMarketplaceByRole =
     isPlatformAdmin ||
     effectiveDiscordRoleIds.some(roleId => allowedMarketplaceDeleteRoles.includes(roleId));
+
+const marketplacePageForTable = (table:string) =>
+    table === 'marketplace_ilegal' ? 'marketplace-ilegal.html' : 'marketplace.html';
+const marketplaceFeatureForTable = (table:string) =>
+    table === 'marketplace_ilegal' ? 'illegal_marketplace' : 'legal_marketplace';
+const hasMarketplacePageAccess = (table:string) => {
+    const page = marketplacePageForTable(table);
+    const roles = Array.isArray(pagePermissions[page]) ? pagePermissions[page].map(String) : [];
+    return isPlatformAdmin || (
+        packageFeatures.includes(marketplaceFeatureForTable(table)) &&
+        effectiveDiscordRoleIds.some(roleId => roles.includes(roleId))
+    );
+};
+const loadMarketplaceItem = async (table:string, itemId:string) => {
+    const query = db.from(table)
+        .select('id,organization_id,created_by_discord_id')
+        .eq('id', itemId);
+    if (table === 'marketplace_ilegal') query.is('organization_id', null);
+    const { data, error } = await query.maybeSingle();
+    if (error) throw error;
+    return data;
+};
+const canManageMarketplaceComment = (table:string, item:any, comment:any) =>
+    isPlatformAdmin ||
+    String(comment.author_discord_id || '') === String(du.id) ||
+    (canDeleteMarketplaceByRole && (
+        table === 'marketplace_ilegal' ||
+        String(item?.organization_id || '') === String(organizationId)
+    ));
 
 if (body.action === 'marketplace_access') {
     return reply({
         can_delete: canDeleteMarketplaceByRole,
         platform_admin: isPlatformAdmin
     });
+}
+
+if (['marketplace_comments_list', 'marketplace_comment_add', 'marketplace_comment_delete'].includes(String(body.action || ''))) {
+    const table = String(body.table || '');
+    if (!['marketplace', 'marketplace_ilegal'].includes(table)) return reply({ error: 'Tabel Marketplace invalid.' }, 400);
+    if (!hasMarketplacePageAccess(table)) return reply({ error: 'Nu ai acces la comentariile acestei pagini.' }, 403);
+    const itemId = String(body.item_id || '').trim();
+    if (!itemId) return reply({ error: 'Anunțul nu a fost identificat.' }, 400);
+    const item = await loadMarketplaceItem(table, itemId);
+    if (!item) return reply({ error: 'Anunțul nu există sau nu este accesibil.' }, 404);
+
+    if (body.action === 'marketplace_comments_list') {
+        const { data: comments, error } = await db.from('marketplace_comments')
+            .select('id,marketplace_table,marketplace_id,author_discord_id,author_name,content,created_at,updated_at')
+            .eq('marketplace_table', table)
+            .eq('marketplace_id', itemId)
+            .order('created_at', { ascending: true })
+            .limit(200);
+        if (error) throw error;
+        return reply({
+            comments: (comments || []).map((comment:any) => ({
+                ...comment,
+                can_delete: canManageMarketplaceComment(table, item, comment)
+            })),
+            can_comment: true
+        });
+    }
+
+    if (body.action === 'marketplace_comment_add') {
+        const content = String(body.content || '').trim();
+        if (!content || content.length > 2000) return reply({ error: 'Comentariul trebuie să aibă între 1 și 2000 de caractere.' }, 400);
+        const { data: author } = await db.from('users').select('display_name,username').eq('discord_id', du.id).maybeSingle();
+        const authorName = String(author?.display_name || author?.username || du.id).trim().slice(0, 120);
+        const { data: comment, error } = await db.from('marketplace_comments').insert({
+            marketplace_table: table,
+            marketplace_id: itemId,
+            author_discord_id: du.id,
+            author_name: authorName,
+            content
+        }).select('id,marketplace_table,marketplace_id,author_discord_id,author_name,content,created_at,updated_at').single();
+        if (error) throw error;
+        return reply({ comment, can_delete: true });
+    }
+
+    const commentId = String(body.comment_id || '').trim();
+    const { data: comment, error: commentError } = await db.from('marketplace_comments')
+        .select('id,author_discord_id')
+        .eq('id', commentId)
+        .eq('marketplace_table', table)
+        .eq('marketplace_id', itemId)
+        .maybeSingle();
+    if (commentError) throw commentError;
+    if (!comment) return reply({ error: 'Comentariul nu mai există.' }, 404);
+    if (!canManageMarketplaceComment(table, item, comment)) return reply({ error: 'Nu ai permisiunea să ștergi acest comentariu.' }, 403);
+    const { error: deleteError } = await db.from('marketplace_comments').delete().eq('id', commentId).eq('marketplace_table', table).eq('marketplace_id', itemId);
+    if (deleteError) throw deleteError;
+    return reply({ ok: true, deleted_id: commentId });
 }
 
 const hasAnnouncementPageAccess =
@@ -572,6 +750,8 @@ const own = async (id:string) => {
    const {data:deleted,error}=await deleteQuery.select('id');
    if(error)throw error;
    if(!deleted?.length)throw new Error('Anunțul nu a fost șters.');
+   const { error: commentsCleanupError } = await db.from('marketplace_comments').delete().eq('marketplace_table', table).eq('marketplace_id', body.item_id);
+   if (commentsCleanupError) console.warn('Comentariile anunțului nu au putut fi curățate:', commentsCleanupError.message);
    const messageRefs = Array.isArray(item.discord_message_ids) ? item.discord_message_ids : [];
    for (const ref of messageRefs) {
      if (!ref?.webhook || !ref?.id) continue;
@@ -580,7 +760,7 @@ const own = async (id:string) => {
    return reply({ok:true,deleted_id:body.item_id});
  }
  if(body.action==='marketplace_update'){if(body.table!=='marketplace_ilegal')throw new Error('Tabel Marketplace invalid.');const itemQuery=db.from('marketplace_ilegal').select('id,organization_id,created_by_discord_id').eq('id',body.item_id).is('organization_id',null);const {data:item,error:itemError}=await itemQuery.maybeSingle();if(itemError)throw itemError;if(!item)return reply({error:'Anunțul global nu există sau nu este accesibil.'},404);if(!isPlatformAdmin&&String(item.created_by_discord_id||'')!==String(du.id))return reply({error:'Poți edita numai anunțurile publicate de tine.'},403);const {data:updated,error:updateError}=await db.from('marketplace_ilegal').update({nume:normalizeBlackMarketName(body.nume),telefon:String(body.telefon||''),tip_actiune:body.tip_actiune||null,categorie:body.categorie||null,subcategorie:body.subcategorie||null,produse:String(body.produse||''),pret:body.pret||null,imagini_json:body.imagini_json||'[]',imagine_url:body.imagine_url||null,updated_at:new Date().toISOString()}).eq('id',body.item_id).is('organization_id',null).select('*').single();if(updateError)throw updateError;return reply({ok:true,item:updated})}
- if(body.action==='react'){const key={organization_id:organizationId,post_id:body.post_id,user_discord_id:du.id,reaction:body.reaction};const {data}=await db.from('community_reactions').select('id').match(key).maybeSingle();const q=data?db.from('community_reactions').delete().eq('organization_id',organizationId).eq('id',data.id):db.from('community_reactions').insert(key);const {error}=await q;if(error)throw error;return reply({ok:true})}
+ if(body.action==='react'){const reaction=String(body.reaction||'');if(!allowedCommunityReactions.has(reaction))return reply({error:'Reacție invalidă.'},400);const key={organization_id:organizationId,post_id:body.post_id,user_discord_id:du.id,reaction};const {data}=await db.from('community_reactions').select('id').match(key).maybeSingle();const q=data?db.from('community_reactions').delete().eq('organization_id',organizationId).eq('id',data.id):db.from('community_reactions').insert(key);const {error}=await q;if(error)throw error;return reply({ok:true})}
  if(body.action==='vote'){const {data:option}=await db.from('community_poll_options').select('post_id').eq('organization_id',organizationId).eq('id',body.option_id).single();if(!option||option.post_id!==body.post_id)throw new Error('Opțiune invalidă.');const {error}=await db.from('community_poll_votes').upsert({organization_id:organizationId,post_id:body.post_id,option_id:body.option_id,user_discord_id:du.id},{onConflict:'post_id,user_discord_id'});if(error)throw error;await updateDiscordPoll(body.post_id);return reply({ok:true})}
  return reply({error:'Acțiune necunoscută.'},400);
 async function notifyDiscord(post:any, options:string[], audience:string){
