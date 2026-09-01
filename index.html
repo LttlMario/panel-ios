@@ -14,7 +14,7 @@
     <script src="js/panel-layout.js?v=4.28.9"></script>
     <link rel="stylesheet" href="css/global-footer.css">
     <link rel="stylesheet" href="css/dashboard.css">
-    <script src="js/project-version.js?v=3.11.5"></script>
+    <script src="js/project-version.js?v=3.12.0"></script>
     <link rel="icon" href="img/favicon.ico">
     <link rel="apple-touch-icon" href="img/logo-180.png">
 </head>
@@ -56,20 +56,6 @@
                     </div>
 
                 </section>
-                <div id="dashboard-fivem-launcher" class="dashboard-fivem-wrap">
-                    <a href="fivem://connect/" aria-label="Deschide FiveM și conectează-te la server" class="dashboard-fivem-card">
-                        <span class="dashboard-fivem-icon" aria-hidden="true">
-                            <img src="img/fivem-launcher.svg" alt="">
-                            <span class="dashboard-fivem-status"></span>
-                        </span>
-                        <span class="dashboard-fivem-copy">
-                            <span class="dashboard-fivem-eyebrow">Conectare rapidă</span>
-                            <strong>Deschide FiveM</strong>
-                            <span>Pornește clientul și intră pe server</span>
-                        </span>
-                        <span class="dashboard-fivem-arrow" aria-hidden="true">↗</span>
-                    </a>
-                </div>
         </main>
     </div>
 
@@ -86,6 +72,42 @@
         let dashboardOrganizationId = null;
         let dashboardRefreshTimeout = null;
         let dashboardHasPontajAccess = true;
+        let dashboardFivemRefreshTimer = null;
+
+        async function loadDashboardFivemStatus() {
+            const stats = document.getElementById('dashboard-fivem-stats');
+            const players = document.getElementById('dashboard-fivem-players');
+            const detail = document.getElementById('dashboard-fivem-stats-detail');
+            if (!stats || !players || !detail || typeof window.panelRequestJson !== 'function') return;
+
+            try {
+                const status = await window.panelRequestJson('fivem-status', {
+                    method: 'GET',
+                    timeoutMs: 8000,
+                    retry: true
+                });
+                const onlinePlayers = Number(status.players);
+                const maxPlayers = Number(status.maxPlayers);
+                if (status.online !== true || !Number.isFinite(onlinePlayers) || !Number.isFinite(maxPlayers)) {
+                    throw new Error('Statusul FiveM nu este disponibil.');
+                }
+
+                stats.classList.remove('is-offline');
+                players.textContent = `${onlinePlayers} / ${maxPlayers}`;
+                detail.textContent = 'jucători conectați';
+            } catch (error) {
+                console.warn('Status FiveM indisponibil:', error);
+                stats.classList.add('is-offline');
+                players.textContent = 'Indisponibil';
+                detail.textContent = 'status live indisponibil';
+            }
+        }
+
+        function startDashboardFivemStatus() {
+            clearInterval(dashboardFivemRefreshTimer);
+            loadDashboardFivemStatus();
+            dashboardFivemRefreshTimer = setInterval(loadDashboardFivemStatus, 60000);
+        }
 
         function configureDashboardAccess() {
             const allowedPages = typeof getAllowedPages === 'function' ? getAllowedPages() : null;
@@ -154,6 +176,7 @@
 
                 localStorage.setItem('discord_user', JSON.stringify(activeUser));
                 configureDashboardAccess();
+                startDashboardFivemStatus();
                 function scheduleDashboardRefresh() {
                     if (!dashboardDiscordId) return;
 
