@@ -1,4 +1,4 @@
-const CACHE_NAME = 'panel-ios-v15-navigation-fix';
+const CACHE_NAME = 'panel-pro-ios-v16-domain-sync';
 const APP_SHELL = [
   './login.html',
   './index.html',

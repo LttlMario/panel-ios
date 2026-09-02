@@ -1,5 +1,6 @@
 -- Normalizează audiențele istorice ale anunțurilor înainte ca aplicațiile
--- actuale să le filtreze.
+-- actuale să le filtreze. Valorile vechi rămân compatibile cu aceeași logică:
+-- family -> organizație, mechanics -> birouri / angajați.
 
 ALTER TABLE public.community_posts
   ADD COLUMN IF NOT EXISTS audience text;

@@ -1,6 +1,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2.112.3';
 import { requirePanelSession } from '../_shared/panel-session.ts';
 import { getPlatformSecret } from '../_shared/platform-secrets.ts';
+import { deliverDiscordRoute, routeCandidates, requestDiscordTarget } from '../_shared/discord-delivery.ts';
 
 const headers = {
   'Access-Control-Allow-Origin': 'https://panel-pro.ro',
@@ -29,68 +30,15 @@ const routeTargets = (route: any, legacyUrl = '') => {
 };
 
 const syncDiscordWebhook = async (db: any, organizationId: string, routeKey: string, embed: any, existingMessageIds: any = {}, createIfMissing = true) => {
-  const { data: settings, error } = await db.from('organization_settings').select('webhook_routes').eq('organization_id', organizationId).maybeSingle();
+  const { data: settings, error } = await db.from('organization_settings').select('webhook_routes,discord_channel_routes').eq('organization_id', organizationId).maybeSingle();
   if (error) throw error;
-  const targets = routeTargets(settings?.webhook_routes?.[routeKey]);
-  if (!targets.length) {
-    console.warn(`Nu există un webhook activ pentru ruta ${routeKey}, organizația ${organizationId}.`);
-    return { route: routeKey, configured: false, sent: 0, edited: 0, failed: 0, message_ids: {} };
-  }
+  const destinations = routeCandidates(settings, routeKey);
+  if (!destinations.some((item) => item.candidates.length)) return { route: routeKey, configured: false, sent: 0, edited: 0, failed: 0, message_ids: {} };
+  if (!createIfMissing) return { route: routeKey, configured: true, sent: 0, edited: 0, failed: 0, message_ids: {} };
+  const delivery = await deliverDiscordRoute(db, settings, routeKey, JSON.stringify({ username: 'Panel Pro · Stash', embeds: [embed], allowed_mentions: { parse: [] } }), { messageIds: existingMessageIds });
   const messageIds: Record<string, string> = {};
-  let sent = 0;
-  let edited = 0;
-  let failed = 0;
-  await Promise.all(targets.map(async (target: any) => {
-    const baseUrl = String(target.url).replace(/\/$/, '');
-    const existingMessageId = text(existingMessageIds?.[target.key], 100);
-    try {
-      const payload = JSON.stringify({ username: 'Panel Pro · Stash', embeds: [embed], allowed_mentions: { parse: [] } });
-      if (existingMessageId) {
-        const editResponse = await fetch(`${baseUrl}/messages/${encodeURIComponent(existingMessageId)}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: payload
-        });
-        if (editResponse.ok) {
-          messageIds[target.key] = existingMessageId;
-          edited += 1;
-          return;
-        }
-        if (editResponse.status !== 404) {
-          const details = (await editResponse.text().catch(() => '')).slice(0, 300);
-          console.error(`Webhook ${routeKey} edit returned ${editResponse.status}: ${details}`);
-          failed += 1;
-          return;
-        }
-      }
-      if (!createIfMissing) return;
-      const createUrl = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}wait=true`;
-      const createResponse = await fetch(createUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload
-      });
-      if (!createResponse.ok) {
-        const details = (await createResponse.text().catch(() => '')).slice(0, 300);
-        console.error(`Webhook ${routeKey} returned ${createResponse.status}: ${details}`);
-        failed += 1;
-        return;
-      }
-      const createdMessage = await createResponse.json().catch(() => ({}));
-      const createdMessageId = text(createdMessage?.id, 100);
-      if (!createdMessageId) {
-        console.error(`Webhook ${routeKey} did not return a Discord message id.`);
-        failed += 1;
-        return;
-      }
-      messageIds[target.key] = createdMessageId;
-      sent += 1;
-    } catch (webhookError) {
-      console.error(`Webhook ${routeKey} failed`, webhookError);
-      failed += 1;
-    }
-  }));
-  return { route: routeKey, configured: true, sent, edited, failed, message_ids: messageIds };
+  for (const item of delivery.results || []) if (item.id) messageIds[item.target] = String(item.id);
+  return { route: routeKey, configured: true, sent: delivery.results.filter((item: any) => !existingMessageIds?.[item.target]).length, edited: delivery.results.filter((item: any) => existingMessageIds?.[item.target]).length, failed: delivery.failures.length, message_ids: messageIds };
 };
 
 const syncAndStoreWebhook = async (db: any, table: string, row: any, organizationId: string, routeKey: string, embed: any) => {
@@ -103,16 +51,16 @@ const syncAndStoreWebhook = async (db: any, table: string, row: any, organizatio
 };
 
 const deleteStoredWebhookMessages = async (db: any, organizationId: string, routeKey: string, messageIds: any = {}) => {
-  const { data: settings, error } = await db.from('organization_settings').select('webhook_routes').eq('organization_id', organizationId).maybeSingle();
+  const { data: settings, error } = await db.from('organization_settings').select('webhook_routes,discord_channel_routes').eq('organization_id', organizationId).maybeSingle();
   if (error) throw error;
-  const targets = routeTargets(settings?.webhook_routes?.[routeKey]);
+  const targets = routeCandidates(settings, routeKey).flatMap((item) => item.candidates);
   let deleted = 0;
   let failed = 0;
   await Promise.all(targets.map(async (target: any) => {
     const messageId = text(messageIds?.[target.key], 100);
     if (!messageId) return;
     try {
-      const response = await fetch(`${target.url.replace(/\/$/, '')}/messages/${encodeURIComponent(messageId)}`, { method: 'DELETE' });
+      const response = await requestDiscordTarget(db, target, null, { method: 'DELETE', messageId });
       if (response.ok || response.status === 404) deleted += 1;
       else failed += 1;
     } catch (_) { failed += 1; }
@@ -234,7 +182,7 @@ Deno.serve(async (req) => {
     };
     const name = await actorDisplayName(db, session.discord_id);
     const isOwner = session.is_platform_admin || await isOrganizationOwner(db, organizationId, session.discord_id);
-    const canDeleteOwn = (row: any, field: string) => session.is_platform_admin || isOwner || String(row?.[field] || '') === String(session.discord_id);
+    const canDeleteOwn = (row: any, field: string, permission = 'write') => session.is_platform_admin || isOwner || allowed(permission) || String(row?.[field] || '') === String(session.discord_id);
     const access = {
       read: allowed('read') || isOwner,
       write: allowed('write'),
@@ -268,10 +216,10 @@ Deno.serve(async (req) => {
       return reply({
         ok: true,
         access,
-        items: (itemsResult.data || []).map((row: any) => ({ ...row, can_delete: canDeleteOwn(row, 'created_by_discord_id') })),
-        requests: requests.map((row: any) => ({ ...row, can_delete: canDeleteOwn(row, 'requested_by_discord_id') })),
-        donations: donations.map((row: any) => ({ ...row, can_delete: canDeleteOwn(row, 'donated_by_discord_id') })),
-        archives: (archivesResult.data || []).map((row: any) => ({ ...row, can_delete: canDeleteOwn(row, 'created_by_discord_id') }))
+        items: (itemsResult.data || []).map((row: any) => ({ ...row, can_delete: canDeleteOwn(row, 'created_by_discord_id', 'write') })),
+        requests: requests.map((row: any) => ({ ...row, can_delete: canDeleteOwn(row, 'requested_by_discord_id', 'request') })),
+        donations: donations.map((row: any) => ({ ...row, can_delete: canDeleteOwn(row, 'donated_by_discord_id', 'donate') })),
+        archives: (archivesResult.data || []).map((row: any) => ({ ...row, can_delete: canDeleteOwn(row, 'created_by_discord_id', 'write') }))
       });
     }
 
@@ -341,7 +289,7 @@ Deno.serve(async (req) => {
       const { data: item, error: itemError } = await db.from('organization_stash_items').select('*').eq('organization_id', organizationId).eq('id', body.id).maybeSingle();
       if (itemError) throw itemError;
       if (!item) return reply({ error: 'Articolul nu mai există.' }, 404);
-      if (!canDeleteOwn(item, 'created_by_discord_id')) return reply({ error: 'Doar autorul, proprietarul organizației sau administratorul global poate șterge acest articol.' }, 403);
+      if (!canDeleteOwn(item, 'created_by_discord_id', 'write')) return reply({ error: 'Doar rolurile care pot scrie, proprietarul organizației sau administratorul global pot șterge acest articol.' }, 403);
       const { error } = await db.from('organization_stash_items').delete().eq('organization_id', organizationId).eq('id', body.id);
       if (error) throw error;
       const webhook = await deleteStoredWebhookMessages(db, organizationId, 'stash', item.discord_message_ids || {});
@@ -380,7 +328,7 @@ Deno.serve(async (req) => {
       const { data: request, error: requestError } = await db.from('organization_stash_requests').select('*').eq('organization_id', organizationId).eq('id', body.id).maybeSingle();
       if (requestError) throw requestError;
       if (!request) return reply({ error: 'Cererea nu mai există.' }, 404);
-      if (!canDeleteOwn(request, 'requested_by_discord_id')) return reply({ error: 'Doar autorul, proprietarul organizației sau administratorul global poate șterge această cerere.' }, 403);
+      if (!canDeleteOwn(request, 'requested_by_discord_id', 'request')) return reply({ error: 'Doar rolurile care pot trimite cereri, proprietarul organizației sau administratorul global pot șterge această cerere.' }, 403);
       const { error } = await db.from('organization_stash_requests').delete().eq('organization_id', organizationId).eq('id', body.id);
       if (error) throw error;
       const webhook = await syncDiscordWebhook(db, organizationId, 'stash_requests', requestEmbed({ ...request, status: 'deleted' }, 'Cerere ștearsă din Stash'), request.discord_message_ids || {}, false);
@@ -427,7 +375,7 @@ Deno.serve(async (req) => {
       const { data: donation, error: donationError } = await db.from('organization_stash_donations').select('*').eq('organization_id', organizationId).eq('id', body.id).maybeSingle();
       if (donationError) throw donationError;
       if (!donation) return reply({ error: 'Donația nu mai există.' }, 404);
-      if (!canDeleteOwn(donation, 'donated_by_discord_id')) return reply({ error: 'Doar autorul, proprietarul organizației sau administratorul global poate șterge această donație.' }, 403);
+      if (!canDeleteOwn(donation, 'donated_by_discord_id', 'donate')) return reply({ error: 'Doar rolurile care pot înregistra donații, proprietarul organizației sau administratorul global pot șterge această donație.' }, 403);
       const { error } = await db.from('organization_stash_donations').delete().eq('organization_id', organizationId).eq('id', body.id);
       if (error) throw error;
       const webhook = await syncDiscordWebhook(db, organizationId, 'stash_donations', donationEmbed({ ...donation, status: 'deleted' }, 'Donație ștearsă din Stash'), donation.discord_message_ids || {}, false);

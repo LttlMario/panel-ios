@@ -8,6 +8,10 @@
 # Supabase local
 .supabase/
 supabase/.temp/
+.deploy-work/
+.preview-server.err
+.preview-server.out
+*.inspect.ndjson
 node_modules/
 
 # Sistem/editor

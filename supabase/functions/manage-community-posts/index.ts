@@ -3,6 +3,7 @@ import {requirePanelSession} from '../_shared/panel-session.ts';
 import {isPlatformAdminAccount} from '../_shared/platform-admin.ts';
 import {resolvePackageFeatures} from '../_shared/package-features.ts';
 import {getPlatformSecret} from '../_shared/platform-secrets.ts';
+import {deliverDiscordRoute, routeCandidates, requestDiscordTarget} from '../_shared/discord-delivery.ts';
 const cors={'Access-Control-Allow-Origin':'https://panel-pro.ro','Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-panel-session','Access-Control-Max-Age':'86400','Content-Type':'application/json'};
 
 const reply=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:cors});
@@ -107,15 +108,52 @@ const allowedAnnouncementPublishRoles =
         ? actionPermissions['anunturi.publish'].map(String)
         : [];
 
-const allowedMarketplaceDeleteRoles =
-    Array.isArray(actionPermissions['marketplace.delete'])
-        ? actionPermissions['marketplace.delete'].map(String)
-        : [];
-
 const sessionDiscordRoleIds =
     Array.isArray(session.discord_role_ids)
         ? session.discord_role_ids.map(String)
         : [];
+
+const { data: permissionGuilds, error: permissionGuildsError } = await db
+    .from('organization_guilds')
+    .select('guild_id,kind')
+    .eq('organization_id', organizationId)
+    .eq('enabled', true);
+if (permissionGuildsError) throw permissionGuildsError;
+const { data: permissionRoleMappings, error: permissionRoleMappingsError } = await db
+    .from('organization_role_mappings')
+    .select('guild_id,discord_role_id,discord_role_name,panel_role')
+    .eq('organization_id', organizationId)
+    .eq('enabled', true);
+if (permissionRoleMappingsError) throw permissionRoleMappingsError;
+const guildIdsForAudience = (audience:string) => {
+    const configuredGuilds = permissionGuilds || [];
+    const hasSeparatedGuilds = configuredGuilds.some((guild:any) => String(guild.kind || '') === 'primary')
+        && configuredGuilds.some((guild:any) => String(guild.kind || '') === 'secondary');
+    if (!hasSeparatedGuilds) return configuredGuilds.map((guild:any) => String(guild.guild_id));
+    const preferredKind = audience === 'organization' ? 'secondary' : 'primary';
+    const preferred = (permissionGuilds || [])
+        .filter((guild:any) => String(guild.kind || '') === preferredKind)
+        .map((guild:any) => String(guild.guild_id));
+    return preferred;
+};
+const roleIdsForAudience = (audience:string) => {
+    const guildIds = new Set(guildIdsForAudience(audience));
+    const mappedIds = [...new Set((permissionRoleMappings || [])
+        .filter((role:any) => guildIds.has(String(role.guild_id)))
+        .map((role:any) => String(role.discord_role_id || '').trim())
+        .filter(Boolean))];
+    // Pentru două servere nu permitem fallback la rolurile celuilalt server:
+    // o audiență fără mapări dedicate trebuie configurată explicit. Pentru
+    // configurațiile vechi cu un singur server păstrăm compatibilitatea.
+    const hasSeparatedGuilds = (permissionGuilds || []).some((guild:any) => String(guild.kind || '') === 'primary')
+        && (permissionGuilds || []).some((guild:any) => String(guild.kind || '') === 'secondary');
+    if (!mappedIds.length) return hasSeparatedGuilds ? [] : [...new Set(sessionDiscordRoleIds)];
+    return [...new Set(sessionDiscordRoleIds.filter((roleId) => mappedIds.includes(String(roleId))))];
+};
+const roleIdsForAllAudiences = () => [...new Set([
+    ...roleIdsForAudience('departments'),
+    ...roleIdsForAudience('organization')
+])];
 
 // Accesul la Anunțuri nu are nevoie de fallback-ul pentru rolul organizațional
 // sau de mapările folosite de Marketplace/Disciplină. Returnăm rapid configurația
@@ -126,11 +164,11 @@ if (body.action === 'announcement_access') {
             ? communicationPermissions[audience][kind].map(String)
             : [];
     const announcementCanForAudience = (audience:string, kind:'read'|'write') =>
-        hasCommunicationFeature(audience) && (isPlatformAdmin || sessionDiscordRoleIds.some(roleId => announcementAudienceRoles(audience, kind).includes(roleId)));
+        hasCommunicationFeature(audience) && (isPlatformAdmin || roleIdsForAudience(audience).some(roleId => announcementAudienceRoles(audience, kind).includes(roleId)));
     const announcementPageAccess =
-        isPlatformAdmin || sessionDiscordRoleIds.some(roleId => allowedAnnouncementRoles.includes(roleId));
+        isPlatformAdmin || roleIdsForAllAudiences().some(roleId => allowedAnnouncementRoles.includes(roleId));
     const announcementPublishAccess =
-        isPlatformAdmin || sessionDiscordRoleIds.some(roleId => allowedAnnouncementPublishRoles.includes(roleId));
+        isPlatformAdmin || roleIdsForAllAudiences().some(roleId => allowedAnnouncementPublishRoles.includes(roleId));
     const readAudiences = isPlatformAdmin
         ? ['organization', 'departments']
         : ['organization', 'departments'].filter(audience => announcementCanForAudience(audience, 'read'));
@@ -157,12 +195,6 @@ const { data: activeMemberForPermissions, error: activeMemberError } = await db
     .eq('active', true)
     .maybeSingle();
 if (activeMemberError) throw activeMemberError;
-const { data: permissionRoleMappings, error: permissionRoleMappingsError } = await db
-    .from('organization_role_mappings')
-    .select('discord_role_id,panel_role')
-    .eq('organization_id', organizationId)
-    .eq('enabled', true);
-if (permissionRoleMappingsError) throw permissionRoleMappingsError;
 const activePanelRole = String(activeMemberForPermissions?.panel_role || '').trim().toLowerCase();
 const roleIdsFromActivePanelRole = activePanelRole
     ? (permissionRoleMappings || [])
@@ -171,10 +203,21 @@ const roleIdsFromActivePanelRole = activePanelRole
         .filter(Boolean)
     : [];
 const effectiveDiscordRoleIds = [...new Set([...sessionDiscordRoleIds, ...roleIdsFromActivePanelRole])];
+const effectiveRoleIdsForAudience = (audience:string) => {
+    const guildIds = new Set(guildIdsForAudience(audience));
+    const fallbackIds = (permissionRoleMappings || [])
+        .filter((role:any) => activePanelRole && String(role.panel_role || '').trim().toLowerCase() === activePanelRole && guildIds.has(String(role.guild_id)))
+        .map((role:any) => String(role.discord_role_id || '').trim())
+        .filter(Boolean);
+    return [...new Set([...roleIdsForAudience(audience), ...fallbackIds])];
+};
 
 const hasActionsFeature = isPlatformAdmin || packageFeatures.includes('actions_organization');
-const actionPermissionRoles = (kind:'read'|'write'|'delete') => Array.isArray(actionPermissions[`actions.organization.${kind}`]) ? actionPermissions[`actions.organization.${kind}`].map(String) : [];
-const canAction = (kind:'read'|'write'|'delete') => hasActionsFeature && (isPlatformAdmin || effectiveDiscordRoleIds.some(roleId => actionPermissionRoles(kind).includes(roleId)));
+const actionPermissionRoles = (kind:'read'|'write'|'delete') => {
+    const effectiveKind = kind === 'delete' ? 'write' : kind;
+    return Array.isArray(actionPermissions[`actions.organization.${effectiveKind}`]) ? actionPermissions[`actions.organization.${effectiveKind}`].map(String) : [];
+};
+const canAction = (kind:'read'|'write'|'delete') => hasActionsFeature && (isPlatformAdmin || effectiveRoleIdsForAudience('organization').some(roleId => actionPermissionRoles(kind).includes(roleId)));
 const configuredActionGuilds = async () => {
     const { data, error } = await db.from('organization_guilds').select('guild_id,guild_name,kind,enabled').eq('organization_id', organizationId).eq('enabled', true).order('kind');
     if (error) throw error;
@@ -196,18 +239,58 @@ const loadDiscordGuildMembers = async (guildId:string) => {
         after = String(batch[batch.length - 1]?.user?.id || '0');
         if (after === '0') break;
     }
-    return members.map((member:any) => ({ discord_id: String(member?.user?.id || ''), name: String(member?.nick || member?.user?.global_name || member?.user?.username || member?.user?.id || '').trim(), username: String(member?.user?.username || '').trim() })).filter((member:any) => /^\d{15,22}$/.test(member.discord_id) && member.name);
+    return members.map((member:any) => ({
+        discord_id: String(member?.user?.id || ''),
+        name: String(member?.nick || member?.user?.global_name || member?.user?.username || member?.user?.id || '').trim(),
+        username: String(member?.user?.username || '').trim(),
+        role_ids: Array.isArray(member?.roles) ? member.roles.map((id:any) => String(id)) : [],
+        is_bot: member?.user?.bot === true
+    })).filter((member:any) => /^\d{15,22}$/.test(member.discord_id) && member.name && !member.is_bot);
+};
+const loadDisciplineTargets = async (scope:string) => {
+    const audience = scope === 'organization' ? 'organization' : 'departments';
+    const guildIds = guildIdsForAudience(audience);
+    if (!guildIds.length) return [];
+
+    const discordMembers:any[] = [];
+    for (const guildId of guildIds) discordMembers.push(...await loadDiscordGuildMembers(guildId));
+    const uniqueMembers = [...new Map(discordMembers.map((member:any) => [String(member.discord_id), member])).values()];
+    const ids = uniqueMembers.map((member:any) => String(member.discord_id));
+    const [{ data: profiles, error: profilesError }, { data: employees, error: employeesError }] = ids.length
+        ? await Promise.all([
+            db.from('users').select('discord_id,display_name,username').in('discord_id', ids),
+            db.from('organization_employees').select('discord_id,full_name').eq('organization_id', organizationId).is('archived_at', null).in('discord_id', ids)
+        ])
+        : [{ data: [], error: null }, { data: [], error: null }];
+    if (profilesError) throw profilesError;
+    if (employeesError) throw employeesError;
+
+    const audienceGuildIds = new Set(guildIds.map(String));
+    const roleById = new Map((permissionRoleMappings || [])
+        .filter((role:any) => audienceGuildIds.has(String(role.guild_id)))
+        .map((role:any) => [String(role.discord_role_id), role]));
+    return uniqueMembers.map((member:any) => {
+        const profile = (profiles || []).find((item:any) => String(item.discord_id) === String(member.discord_id));
+        const employee = (employees || []).find((item:any) => String(item.discord_id) === String(member.discord_id));
+        const roleLabels = (member.role_ids || [])
+            .map((roleId:string) => roleById.get(String(roleId)))
+            .filter(Boolean)
+            .map((role:any) => String(role.discord_role_name || role.panel_role || role.discord_role_id || '').trim())
+            .filter(Boolean);
+        return {
+            discord_id: member.discord_id,
+            name: employee?.full_name || profile?.display_name || profile?.username || member.name || `Discord ${member.discord_id}`,
+            ...(roleLabels.length ? { role: [...new Set(roleLabels)].join(', ') } : {})
+        };
+    }).sort((left:any, right:any) => String(left.name).localeCompare(String(right.name), 'ro'));
 };
 const notifyActionDiscord = async (record:any) => {
-    const { data: settings } = await db.from('organization_settings').select('webhook_routes,panel_public_url').eq('organization_id', organizationId).maybeSingle();
-    const route = settings?.webhook_routes?.actions_organization || {};
-    const url = [route?.primary?.enabled !== false ? route?.primary?.url : '', route?.secondary?.enabled !== false ? route?.secondary?.url : ''].map((value:any) => String(value || '').trim()).find(Boolean);
-    if (!url) return null;
+    const { data: settings } = await db.from('organization_settings').select('webhook_routes,discord_channel_routes,panel_public_url').eq('organization_id', organizationId).maybeSingle();
+    if (!routeCandidates(settings, 'actions_organization').some((item) => item.candidates.length)) return null;
     const site = String(settings?.panel_public_url || 'https://panel-pro.ro').replace(/\/$/, '');
     const participants = Array.isArray(record.participants) ? record.participants : [];
-    const response = await fetch(`${url}?wait=true`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ embeds: [{ title: `✅ Acțiune nouă: ${record.action_label}`, description: record.description || 'A fost înregistrată o acțiune a organizației.', color: 5763719, url: `${site}/anunturi.html?actions=${record.id}`, fields: [{ name: 'Tip', value: record.action_type || record.action_label, inline: true }, { name: 'Participanți', value: participants.length ? participants.map((item:any) => `• ${item.name}`).join('\n').slice(0, 1024) : 'Nespecificați' }, ...(record.notes ? [{ name: 'Note', value: String(record.notes).slice(0, 1024) }] : [])], footer: { text: `Panel Pro · ${record.created_by_name || record.created_by_discord_id}` } }] }) });
-    if (!response.ok) return null;
-    return (await response.json().catch(() => ({})))?.id || null;
+    const delivery = await deliverDiscordRoute(db, settings, 'actions_organization', JSON.stringify({ embeds: [{ title: `✅ Acțiune nouă: ${record.action_label}`, description: record.description || 'A fost înregistrată o acțiune a organizației.', color: 5763719, url: `${site}/anunturi.html?actions=${record.id}`, fields: [{ name: 'Tip', value: record.action_type || record.action_label, inline: true }, { name: 'Participanți', value: participants.length ? participants.map((item:any) => `• ${item.name}`).join('\n').slice(0, 1024) : 'Nespecificați' }, ...(record.notes ? [{ name: 'Note', value: String(record.notes).slice(0, 1024) }] : [])], footer: { text: `Panel Pro · ${record.created_by_name || record.created_by_discord_id}` } }] }));
+    return delivery.results[0]?.id || null;
 };
 if (String(body.action || '').startsWith('actions_')) {
     if (!hasActionsFeature) return reply({ error: 'Modulul Acțiuni este disponibil în pachetul Operations sau Full.' }, 403);
@@ -225,6 +308,45 @@ if (String(body.action || '').startsWith('actions_')) {
         if (error) throw error;
         return reply({ actions: data || [], access: { read: canAction('read'), write: canAction('write'), delete: canAction('delete'), platform_admin: isPlatformAdmin }, guilds: await configuredActionGuilds() });
     }
+    if (body.action === 'actions_stats') {
+        const days = Math.min(365, Math.max(1, Number(body.days) || 7));
+        const periodEnd = new Date();
+        const periodStart = new Date(periodEnd.getTime() - ((days - 1) * 86400000));
+        const { data, error } = await db.from('organization_actions')
+            .select('id,action_type,action_label,participants,created_at,created_by_discord_id,created_by_name')
+            .eq('organization_id', organizationId)
+            .gte('created_at', periodStart.toISOString())
+            .lte('created_at', periodEnd.toISOString())
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+        const people = new Map<string, any>();
+        const types = new Map<string, number>();
+        for (const row of data || []) {
+            const type = String(row.action_label || row.action_type || 'Acțiune').trim();
+            types.set(type, (types.get(type) || 0) + 1);
+            for (const participant of Array.isArray(row.participants) ? row.participants : []) {
+                const discordId = String(participant?.discord_id || participant?.id || '').trim();
+                const name = String(participant?.name || participant?.username || discordId || 'Membru necunoscut').trim();
+                if (!discordId) continue;
+                const current = people.get(discordId) || { discord_id: discordId, name, participations: 0, action_ids: new Set<string>(), action_types: new Map<string, number>(), last_activity_at: null };
+                current.name = name || current.name;
+                current.participations += 1;
+                current.action_ids.add(String(row.id));
+                current.action_types.set(type, (current.action_types.get(type) || 0) + 1);
+                if (!current.last_activity_at || String(row.created_at) > current.last_activity_at) current.last_activity_at = row.created_at;
+                people.set(discordId, current);
+            }
+        }
+        const ranking = [...people.values()]
+            .map((person) => ({ discord_id: person.discord_id, name: person.name, participations: person.participations, distinct_actions: person.action_ids.size, action_types: Object.fromEntries(person.action_types), last_activity_at: person.last_activity_at }))
+            .sort((left, right) => right.participations - left.participations || right.distinct_actions - left.distinct_actions || left.name.localeCompare(right.name, 'ro'));
+        return reply({
+            period: { days, start: periodStart.toISOString(), end: periodEnd.toISOString() },
+            totals: { actions: (data || []).length, participations: ranking.reduce((sum, person) => sum + person.participations, 0), people: ranking.length },
+            by_type: [...types.entries()].map(([label, count]) => ({ label, count })).sort((left, right) => right.count - left.count),
+            ranking
+        });
+    }
     if (body.action === 'actions_create') {
         const label = String(body.action_label || '').trim().slice(0, 120), type = String(body.action_type || '').trim().slice(0, 40), guildId = String(body.guild_id || '').trim();
         if (label.length < 2 || !type || !/^\d{15,22}$/.test(guildId)) return reply({ error: 'Completează tipul acțiunii, denumirea și Guild-ul.' }, 400);
@@ -237,7 +359,7 @@ if (String(body.action || '').startsWith('actions_')) {
         const { data: actionRow, error } = await db.from('organization_actions').insert({ organization_id: organizationId, action_type: type, action_label: label, description: String(body.description || '').trim().slice(0, 4000), notes: String(body.notes || '').trim().slice(0, 4000), guild_id: guildId, guild_name: String(guild.guild_name || guildId), participants, created_by_discord_id: du.id, created_by_name: author?.display_name || author?.username || du.id }).select('*').single();
         if (error) throw error;
         let discordMessageId = null;
-        try { discordMessageId = await notifyActionDiscord(actionRow); } catch (error) { console.error('Acțiunea a fost salvată, dar webhook-ul a eșuat:', error); }
+        try { discordMessageId = await notifyActionDiscord(actionRow); } catch (error) { console.error('Acțiunea a fost salvată, dar mesajul botului a eșuat:', error); }
         if (discordMessageId) await db.from('organization_actions').update({ discord_message_id: discordMessageId }).eq('id', actionRow.id).eq('organization_id', organizationId);
         return reply({ ok: true, action: { ...actionRow, discord_message_id: discordMessageId } });
     }
@@ -246,18 +368,23 @@ if (String(body.action || '').startsWith('actions_')) {
         const { data: row, error: loadError } = await db.from('organization_actions').select('*').eq('organization_id', organizationId).eq('id', id).maybeSingle();
         if (loadError) throw loadError;
         if (!row) return reply({ error: 'Acțiunea nu există.' }, 404);
-        const { data: settings } = await db.from('organization_settings').select('webhook_routes').eq('organization_id', organizationId).maybeSingle();
-        const url = settings?.webhook_routes?.actions_organization?.primary?.url || settings?.webhook_routes?.actions_organization?.secondary?.url;
-        if (row.discord_message_id && url) await fetch(`${url.replace(/\/$/, '')}/messages/${encodeURIComponent(row.discord_message_id)}`, { method: 'DELETE' }).catch(() => null);
+        const { data: settings } = await db.from('organization_settings').select('webhook_routes,discord_channel_routes').eq('organization_id', organizationId).maybeSingle();
+        const candidate = routeCandidates(settings, 'actions_organization').flatMap((item) => item.candidates)[0];
+        if (row.discord_message_id && candidate) await requestDiscordTarget(db, candidate, null, { method: 'DELETE', messageId: String(row.discord_message_id) }).catch(() => null);
         const { error } = await db.from('organization_actions').delete().eq('organization_id', organizationId).eq('id', id);
         if (error) throw error;
         return reply({ ok: true, deleted_id: id });
     }
 }
 
+const marketplaceWriteRoles = new Set([
+    ...(Array.isArray(pagePermissions['marketplace.html']) ? pagePermissions['marketplace.html'].map(String) : []),
+    ...(Array.isArray(pagePermissions['marketplace-ilegal.html']) ? pagePermissions['marketplace-ilegal.html'].map(String) : []),
+    ...(Array.isArray(actionPermissions['marketplace.delete']) ? actionPermissions['marketplace.delete'].map(String) : [])
+]);
 const canDeleteMarketplaceByRole =
     isPlatformAdmin ||
-    effectiveDiscordRoleIds.some(roleId => allowedMarketplaceDeleteRoles.includes(roleId));
+    effectiveDiscordRoleIds.some(roleId => marketplaceWriteRoles.has(roleId));
 
 const marketplacePageForTable = (table:string) =>
     table === 'marketplace_ilegal' ? 'marketplace-ilegal.html' : 'marketplace.html';
@@ -354,13 +481,13 @@ if (['marketplace_comments_list', 'marketplace_comment_add', 'marketplace_commen
 
 const hasAnnouncementPageAccess =
     isPlatformAdmin ||
-    sessionDiscordRoleIds.some(roleId =>
+    roleIdsForAllAudiences().some(roleId =>
         allowedAnnouncementRoles.includes(roleId)
     );
 
 const canPublishAnnouncements =
     isPlatformAdmin ||
-    sessionDiscordRoleIds.some(roleId =>
+    roleIdsForAllAudiences().some(roleId =>
         allowedAnnouncementPublishRoles.includes(roleId)
     );
 const audienceRoles = (audience:string, kind:'read'|'write') =>
@@ -368,13 +495,13 @@ const audienceRoles = (audience:string, kind:'read'|'write') =>
         ? communicationPermissions[audience][kind].map(String)
         : [];
 const canForAudience = (audience:string, kind:'read'|'write') =>
-    hasCommunicationFeature(audience) && (isPlatformAdmin || sessionDiscordRoleIds.some(roleId => audienceRoles(audience, kind).includes(roleId)));
+    hasCommunicationFeature(audience) && (isPlatformAdmin || roleIdsForAudience(audience).some(roleId => audienceRoles(audience, kind).includes(roleId)));
 const disciplineRoles = (scope:string, action:'read'|'write'|'sanction') =>
     Array.isArray(disciplinePermissions?.[scope]?.[action])
         ? disciplinePermissions[scope][action].map(String)
         : [];
 const canDiscipline = (scope:string, action:'read'|'write'|'sanction') =>
-    hasDisciplineFeature(scope) && (isPlatformAdmin || effectiveDiscordRoleIds.some(roleId => disciplineRoles(scope, action).includes(roleId)));
+    hasDisciplineFeature(scope) && (isPlatformAdmin || effectiveRoleIdsForAudience(scope === 'organization' ? 'organization' : 'departments').some(roleId => disciplineRoles(scope, action).includes(roleId)));
 const disciplineVisible = (scope:string, targetDiscordId:string|null) =>
     hasDisciplineFeature(scope) && (scope === 'departments'
         ? String(targetDiscordId || '') === String(session.discord_id) || canDiscipline(scope, 'read') || canDiscipline(scope, 'write') || canDiscipline(scope, 'sanction')
@@ -416,27 +543,12 @@ if (
   const {data:user}=await db.from('users').select('*').eq('discord_id',du.id).single();if(!user)return reply({error:'Utilizatorul nu există în panel.'},403);
 
 const resolveDisciplineTarget = async (scope:string, targetDiscordId:string|null) => {
-    if (scope === 'organization') {
-        const { data: organization, error } = await db.from('organizations').select('name').eq('id', organizationId).maybeSingle();
-        if (error) throw error;
-        return { discordId: null, name: organization?.name || 'Organizația activă' };
-    }
     const discordId = String(targetDiscordId || '').trim();
-    if (!discordId) throw new Error('Selectează angajatul vizat.');
-    const { data: member, error: memberError } = await db.from('organization_members')
-        .select('discord_id,panel_role,active')
-        .eq('organization_id', organizationId)
-        .eq('discord_id', discordId)
-        .eq('active', true)
-        .maybeSingle();
-    if (memberError) throw memberError;
-    if (!member) throw new Error('Angajatul selectat nu aparține organizației active.');
-    const { data: profile, error: profileError } = await db.from('users')
-        .select('display_name,username')
-        .eq('discord_id', discordId)
-        .maybeSingle();
-    if (profileError) throw profileError;
-    return { discordId, name: profile?.display_name || profile?.username || `Discord ${discordId}` };
+    if (!discordId) throw new Error('Selectează membrul vizat.');
+    const targets = await loadDisciplineTargets(scope);
+    const target = targets.find((item:any) => String(item.discord_id) === discordId);
+    if (!target) throw new Error('Membrul selectat nu aparține Discordului configurat pentru această secțiune.');
+    return { discordId, name: target.name };
 };
 
 const activeDisciplineCount = async (scope:string, targetDiscordId:string|null) => {
@@ -445,7 +557,7 @@ const activeDisciplineCount = async (scope:string, targetDiscordId:string|null) 
         .eq('organization_id', organizationId)
         .eq('target_scope', scope)
         .eq('status', 'active');
-    if (scope === 'departments') query.eq('target_discord_id', targetDiscordId);
+    if (targetDiscordId) query.eq('target_discord_id', targetDiscordId);
     const { count, error } = await query;
     if (error) throw error;
     return Number(count || 0);
@@ -453,7 +565,7 @@ const activeDisciplineCount = async (scope:string, targetDiscordId:string|null) 
 
 const notifyDisciplineDiscord = async (kind:'warning'|'sanction', record:any) => {
     const { data: settings } = await db.from('organization_settings')
-        .select('webhook_routes,panel_public_url')
+        .select('webhook_routes,discord_channel_routes,panel_public_url')
         .eq('organization_id', organizationId)
         .maybeSingle();
     const audience = record.target_scope === 'departments' ? 'departments' : 'organization';
@@ -461,25 +573,17 @@ const notifyDisciplineDiscord = async (kind:'warning'|'sanction', record:any) =>
         ? (audience === 'departments' ? 'warnings_departments' : 'warnings_organization')
         : (audience === 'departments' ? 'sanctions_departments' : 'sanctions_organization');
     const fallbackKey = audience === 'departments' ? 'fines_departments' : 'fines_organization';
-    const route = settings?.webhook_routes?.[routeKey] || settings?.webhook_routes?.[fallbackKey] || {};
-    const url = route?.primary?.url || route?.secondary?.url;
-    if (!url) return null;
+    if (!routeCandidates(settings, routeKey, [], fallbackKey).some((item) => item.candidates.length)) return null;
     const site = String(settings?.panel_public_url || 'https://panel-pro.ro').replace(/\/$/, '');
     const detailUrl = `${site}/anunturi.html?discipline=${kind}&id=${record.id}`;
-    const response = await fetch(`${url}?wait=true`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ embeds: [{
+    const delivery = await deliverDiscordRoute(db, settings, routeKey, JSON.stringify({ embeds: [{
             title: kind === 'warning' ? '⚠️ Evidență disciplinară nouă' : '💰 Măsură financiară nouă',
             description: 'A fost înregistrată o măsură disciplinară. Detaliile sunt disponibile numai persoanelor autorizate în panel.',
             color: kind === 'warning' ? 16753920 : 15548997,
             url: detailUrl,
             footer: { text: 'Panel Pro · acces controlat' }
-        }] })
-    });
-    if (!response.ok) return null;
-    const message = await response.json().catch(() => ({}));
-    return message?.id || null;
+        }] }), { fallbackRouteKey: fallbackKey });
+    return delivery.results[0]?.id || null;
 };
 
 if (['discipline_list', 'discipline_targets'].includes(String(body.action || ''))) {
@@ -494,16 +598,7 @@ if (['discipline_list', 'discipline_targets'].includes(String(body.action || '')
     if (body.action === 'discipline_targets') {
         const scope = String(body.target_scope || '');
         if (!canDiscipline(scope, 'write') && !canDiscipline(scope, 'sanction')) return reply({ error: 'Nu ai dreptul să selectezi destinatari pentru această categorie.' }, 403);
-        if (scope === 'organization') return reply({ targets: [{ discord_id: null, name: 'Organizația activă' }] });
-        const { data: members, error: membersError } = await db.from('organization_members')
-            .select('discord_id,panel_role').eq('organization_id', organizationId).eq('active', true).order('panel_role');
-        if (membersError) throw membersError;
-        const ids = (members || []).map((item:any) => String(item.discord_id));
-        const { data: profiles } = ids.length ? await db.from('users').select('discord_id,display_name,username').in('discord_id', ids) : { data: [] };
-        return reply({ targets: (members || []).map((member:any) => {
-            const profile = (profiles || []).find((item:any) => String(item.discord_id) === String(member.discord_id));
-            return { discord_id: member.discord_id, name: profile?.display_name || profile?.username || member.discord_id, role: member.panel_role };
-        }) });
+        return reply({ targets: await loadDisciplineTargets(scope) });
     }
     return reply({
         warnings: visibleWarnings,
@@ -521,7 +616,7 @@ if (body.action === 'discipline_create_warning') {
     const scope = String(body.target_scope || '');
     if (!['departments', 'organization'].includes(scope)) return reply({ error: 'Categoria disciplinară este invalidă.' }, 400);
     if (!canDiscipline(scope, 'write')) return reply({ error: 'Rolul tău nu poate emite avertismente pentru această categorie.' }, 403);
-    const target = await resolveDisciplineTarget(scope, scope === 'departments' ? String(body.target_discord_id || '') : null);
+    const target = await resolveDisciplineTarget(scope, String(body.target_discord_id || ''));
     const count = await activeDisciplineCount(scope, target.discordId);
     if (count >= 3) return reply({ error: 'Destinatarul are deja 3 avertismente active. Poți aplica o sancțiune financiară.' }, 409);
     const { data: warning, error } = await db.from('disciplinary_warnings').insert({
@@ -539,7 +634,7 @@ if (body.action === 'discipline_create_sanction') {
     const scope = String(body.target_scope || '');
     if (!['departments', 'organization'].includes(scope)) return reply({ error: 'Categoria disciplinară este invalidă.' }, 400);
     if (!canDiscipline(scope, 'sanction')) return reply({ error: 'Rolul tău nu poate aplica sancțiuni pentru această categorie.' }, 403);
-    const target = await resolveDisciplineTarget(scope, scope === 'departments' ? String(body.target_discord_id || '') : null);
+    const target = await resolveDisciplineTarget(scope, String(body.target_discord_id || ''));
     const count = await activeDisciplineCount(scope, target.discordId);
     if (count < 3) return reply({ error: `Sancțiunea devine disponibilă după 3 avertismente active. Acum există ${count}.` }, 409);
     const amount = Number(body.amount);
@@ -581,16 +676,15 @@ if (body.action === 'discipline_delete') {
     if (!hasDisciplineFeature(item.target_scope)) return reply({ error: 'Această categorie disciplinară nu este inclusă în pachetul organizației.' }, 403);
     if (!isPlatformAdmin && !isAuthor && !configuredDelete) return reply({ error: 'Nu ai dreptul să ștergi această înregistrare.' }, 403);
 
-    const { data: settings } = await db.from('organization_settings').select('webhook_routes').eq('organization_id', organizationId).maybeSingle();
+    const { data: settings } = await db.from('organization_settings').select('webhook_routes,discord_channel_routes').eq('organization_id', organizationId).maybeSingle();
     if (item.discord_message_id) {
         const audience = item.target_scope === 'departments' ? 'departments' : 'organization';
         const routeKey = kind === 'warning'
             ? (audience === 'departments' ? 'warnings_departments' : 'warnings_organization')
             : (audience === 'departments' ? 'sanctions_departments' : 'sanctions_organization');
         const fallbackKey = audience === 'departments' ? 'fines_departments' : 'fines_organization';
-        const route = settings?.webhook_routes?.[routeKey] || settings?.webhook_routes?.[fallbackKey] || {};
-        const webhookUrls = [...new Set([route.primary?.url, route.secondary?.url].filter(Boolean).map(String))];
-        await Promise.all(webhookUrls.map((url) => fetch(`${url.replace(/\/$/, '')}/messages/${encodeURIComponent(String(item.discord_message_id))}`, { method: 'DELETE' }).catch(() => null)));
+        const targets = routeCandidates(settings, routeKey, [], fallbackKey).flatMap((item) => item.candidates);
+        await Promise.all(targets.map((target) => requestDiscordTarget(db, target, null, { method: 'DELETE', messageId: String(item.discord_message_id) }).catch(() => null)));
     }
     const { error } = await db.from(table).delete().eq('organization_id', organizationId).eq('id', body.id);
     if (error) throw error;
@@ -657,10 +751,10 @@ const own = async (id:string) => {
     let discordMessageId = null;
     let discordDeliveryWarning = '';
     try {
-        stage='notify_discord_webhook';
+        stage='notify_discord_bot';
         discordMessageId = await notifyDiscord(post, body.options || [], post.audience);
     } catch (error) {
-        discordDeliveryWarning = error instanceof Error ? error.message : 'Webhook-ul Discord nu a putut fi contactat.';
+        discordDeliveryWarning = error instanceof Error ? error.message : 'Canalul Discord al botului nu a putut fi contactat.';
         console.error('Postarea a fost salvată, dar livrarea Discord a eșuat:', discordDeliveryWarning);
     }
 
@@ -699,7 +793,7 @@ const own = async (id:string) => {
     if (post.discord_message_id) {
         const { data: cfg } = await db
             .from('organization_settings')
-            .select('webhook_routes')
+            .select('webhook_routes,discord_channel_routes')
             .eq('organization_id', organizationId)
             .maybeSingle();
 
@@ -711,20 +805,9 @@ const own = async (id:string) => {
         const routeKey = post.post_type === 'fine'
             ? (audience === 'departments' ? 'fines_departments' : 'fines_organization')
             : audience;
-        const route = cfg?.webhook_routes?.[routeKey] || {};
-
-        const webhooks = [
-            route.primary?.url,
-            route.secondary?.url
-        ].filter(Boolean);
-
-        for (const webhook of webhooks) {
-            await fetch(
-                `${webhook}/messages/${post.discord_message_id}`,
-                {
-                    method: 'DELETE'
-                }
-            );
+        const targets = routeCandidates(cfg, routeKey).flatMap((item) => item.candidates);
+        for (const target of targets) {
+            await requestDiscordTarget(db, target, null, { method: 'DELETE', messageId: String(post.discord_message_id) }).catch(() => null);
         }
     }
 
@@ -753,9 +836,16 @@ const own = async (id:string) => {
    const { error: commentsCleanupError } = await db.from('marketplace_comments').delete().eq('marketplace_table', table).eq('marketplace_id', body.item_id);
    if (commentsCleanupError) console.warn('Comentariile anunțului nu au putut fi curățate:', commentsCleanupError.message);
    const messageRefs = Array.isArray(item.discord_message_ids) ? item.discord_message_ids : [];
+   const referenceOrganizationIds = [...new Set(messageRefs.map((ref: any) => String(ref?.organization_id || organizationId)).filter(Boolean))];
+   const { data: referenceSettings } = await db.from('organization_settings').select('organization_id,webhook_routes,discord_channel_routes').in('organization_id', referenceOrganizationIds);
+   const settingsByOrganization = new Map((referenceSettings || []).map((settings: any) => [String(settings.organization_id), settings]));
    for (const ref of messageRefs) {
-     if (!ref?.webhook || !ref?.id) continue;
-     try { await fetch(`${String(ref.webhook).replace(/\/$/, '')}/messages/${encodeURIComponent(String(ref.id))}`, { method: 'DELETE' }); } catch (_) {}
+     if (ref?.channel_id && ref?.id) {
+       const refSettings = settingsByOrganization.get(String(ref.organization_id || organizationId));
+       const routeKey = globalMarketplace ? 'illegal_marketplace' : 'marketplace';
+       const target = routeCandidates(refSettings, routeKey).flatMap((entry) => entry.candidates).find((candidate) => candidate.transport === 'bot' && String(candidate.channel_id) === String(ref.channel_id));
+       if (target) await requestDiscordTarget(db, target, null, { method: 'DELETE', messageId: String(ref.id) }).catch(() => null);
+     }
    }
    return reply({ok:true,deleted_id:body.item_id});
  }
@@ -775,16 +865,7 @@ async function notifyDiscord(post:any, options:string[], audience:string){
     const routeKey = post.post_type === 'fine'
         ? (audience === 'departments' ? 'fines_departments' : 'fines_organization')
         : (audience === 'departments' ? 'departments' : 'organization');
-    const route = discordConfig?.webhook_routes?.[routeKey];
-    const url = route?.primary?.url || route?.secondary?.url;
-
-    if (!url) {
-        console.error(
-            `Webhook lipsă pentru organizația ${organizationId}, audiența ${audience}`
-        );
-
-        return null;
-    }
+    if (!routeCandidates(discordConfig, routeKey).some((item) => item.candidates.length)) return null;
 
     const site = (
         discordConfig?.panel_public_url ||
@@ -819,57 +900,18 @@ async function notifyDiscord(post:any, options:string[], audience:string){
     });
 
 
-    const sent = await fetch(`${url}?wait=true`,{
-
-        method:'POST',
-
-        headers:{
-            'Content-Type':'application/json'
-        },
-
-        body:JSON.stringify({
-
-            embeds:[{
-
-                title:post.title,
-                description:post.content,
-                color: audience === 'organization' ? 5865 : 3447003,
-                fields,
-                url:postUrl,
-
-                footer:{
-                    text:
-                    `${post.post_type === 'poll'
-                        ? 'Sondaj'
-                        : post.post_type === 'question'
-                        ? 'Întrebare'
-                        : 'Anunț'} • ${post.author_name}`
-                }
-
-            }]
-
-        })
-
-    });
-
-
-    if (!sent.ok) {
-        const discordError = await sent.text();
-
-        console.error(
-            `Discord webhook error pentru organizația ${organizationId}, audiența ${audience}:`,
-            sent.status,
-            discordError
-        );
-
-        throw new Error(
-            `Postarea a fost creată, dar Discord a răspuns cu eroarea HTTP ${sent.status}.`
-        );
-    }
-
-    const message = await sent.json();
-
-    return message?.id || null;
+    const delivery = await deliverDiscordRoute(db, discordConfig, routeKey, JSON.stringify({
+        embeds: [{
+            title: post.title,
+            description: post.content,
+            color: audience === 'organization' ? 5865 : 3447003,
+            fields,
+            url: postUrl,
+            footer: { text: `${post.post_type === 'poll' ? 'Sondaj' : post.post_type === 'question' ? 'Întrebare' : 'Anunț'} • ${post.author_name}` }
+        }]
+    }));
+    if (!delivery.results.length) throw new Error(`Postarea a fost creată, dar Discord nu a acceptat mesajul. ${delivery.failures.join(' | ')}`);
+    return delivery.results[0]?.id || null;
     }
 
     async function updateDiscordPoll(postId:string){
@@ -937,12 +979,7 @@ async function notifyDiscord(post:any, options:string[], audience:string){
     const routeKey = post.post_type === 'fine'
         ? (audience === 'departments' ? 'fines_departments' : 'fines_organization')
         : audience;
-    const route = discordConfig?.webhook_routes?.[routeKey];
-
-    const url = route?.primary?.url || route?.secondary?.url;
-
-
-    if(!url) return;
+    if (!routeCandidates(discordConfig, routeKey).some((item) => item.candidates.length)) return;
 
 
     const site = (
@@ -954,49 +991,17 @@ async function notifyDiscord(post:any, options:string[], audience:string){
     const postUrl = `${site}/anunturi.html?post=${post.id}`;
 
 
-    await fetch(`${url}/messages/${post.discord_message_id}`,{
-
-        method:'PATCH',
-
-        headers:{
-            'Content-Type':'application/json'
-        },
-
-        body:JSON.stringify({
-
-            embeds:[{
-
-                title:post.title,
-
-                description:post.content,
-
-                color: audience === 'organization' ? 5865 : 3447003,
-
-                url:postUrl,
-
-                fields:[
-
-                    {
-                        name:`Rezultate live • ${total} voturi`,
-                        value:result || 'Încă nu există voturi.'
-                    },
-
-                    {
-                        name:'🗳️ Votează în panel',
-                        value:`[Deschide sondajul](${postUrl})`
-                    }
-
-                ],
-
-                footer:{
-                    text:`Sondaj • ${post.author_name}`
-                }
-
-            }]
-
-        })
-
-    });
+    await deliverDiscordRoute(db, discordConfig, routeKey, JSON.stringify({ embeds: [{
+        title: post.title,
+        description: post.content,
+        color: audience === 'organization' ? 5865 : 3447003,
+        url: postUrl,
+        fields: [
+            { name: `Rezultate live • ${total} voturi`, value: result || 'Încă nu există voturi.' },
+            { name: '🗳️ Votează în panel', value: `[Deschide sondajul](${postUrl})` }
+        ],
+        footer: { text: `Sondaj • ${post.author_name}` }
+    }] }), { messageIds: { primary: String(post.discord_message_id) } });
 
 }
  }catch(e){
